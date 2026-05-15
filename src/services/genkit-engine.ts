@@ -80,7 +80,7 @@ export class GenkitEngineImpl implements GenkitEngine {
         const prompt = `Analyze the following text and extract key entities (people, organizations, locations, concepts, dates) and the relationships between them. Ensure that 'source' and 'target' in relationships precisely match the 'name' of the extracted entities. Normalize relationship types to clear, capitalized verbs (e.g., "WORKS_AT", "LOCATED_IN").\n\nText:\n${safeText}`;
 
         const response = await this.ai!.generate({
-          model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
+          model: 'googleai/gemini-2.5-flash',
           prompt: prompt,
           output: {
             format: 'json',
@@ -125,7 +125,7 @@ export class GenkitEngineImpl implements GenkitEngine {
   }
 
   /**
-   * Generates vector embeddings for a text
+   * Generates vector embeddings for a text using HuggingFace
    * Requirements: 4.4
    */
   async generateEmbeddings(text: string): Promise<number[]> {
@@ -133,13 +133,23 @@ export class GenkitEngineImpl implements GenkitEngine {
 
     return retryWithBackoff(async () => {
       try {
-        const response = await this.ai!.embed({
-          embedder: 'googleai/text-embedding-004',
-          content: text
+        const response = await fetch('https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-mpnet-base-v2', {
+          headers: { 
+            Authorization: `Bearer ${process.env.HF_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
+          body: JSON.stringify({ inputs: [text] }),
         });
-
+        
+        if (!response.ok) {
+           const errorData = await response.text();
+           throw new Error(`HF API error: ${response.status} - ${errorData}`);
+        }
+        
+        const result = await response.json() as any[];
         // Return the first embedding vector
-        return response[0].embedding;
+        return result[0];
       } catch (error: any) {
         const statusCode = error.status || error.code || 500;
         throw new GenkitAPIError(

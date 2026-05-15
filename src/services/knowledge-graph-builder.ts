@@ -332,7 +332,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
           requirement: item.requirement,
           category: item.category,
           description: item.description,
-          keywords: item.keywords
+          keywords: item.keywords || []
         });
       }
 

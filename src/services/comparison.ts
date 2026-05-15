@@ -1,20 +1,37 @@
 /**
  * Comparison Service
- * 
+ *
  * Extracts ontology from a normative document and compares it
  * against a program/syllabus document to detect coverage gaps.
+ *
+ * Strategy:
+ *   - Uses Gemini 2.5 Flash (1M-token context, compatible with free API keys).
+ *   - Sends the ENTIRE document text — no chunking, no truncation unless
+ *     the combined text genuinely exceeds the safe limit (~700k chars/doc).
+ *   - Performs a SINGLE holistic comparison call instead of batches.
+ *   - Uses format:'text' + manual JSON parsing so a truncated response
+ *     never crashes the pipeline — all complete items are recovered.
+ *   - maxOutputTokens set to 65 536 (Flash maximum).
  */
 
 import { genkit, Genkit } from 'genkit';
 import { googleAI } from '@genkit-ai/google-genai';
 import { groq } from 'genkitx-groq';
-import { z } from 'zod';
 import { createLogger } from './logger';
 import { retryWithBackoff } from '../utils/retry';
 
 const logger = createLogger();
 
-// ── Types ──
+// ─── Model constants ───────────────────────────────────────────────────────
+const MODEL_FLASH = 'googleai/gemini-2.5-flash';
+
+// 65 536 is the maximum output token limit for Gemini 2.5 Flash.
+const MAX_OUTPUT_TOKENS = 65_536;
+
+// Safe upper limit per document: ~700k chars ≈ 175k tokens.
+const MAX_CHARS_PER_DOC = 700_000;
+
+// ── Types ──────────────────────────────────────────────────────────────────
 
 export interface OntologyItem {
   id: string;
@@ -47,33 +64,98 @@ export interface ComparisonReport {
   timestamp: string;
 }
 
-// ── Zod Schemas for Genkit structured output ──
+// ── JSON recovery helpers ──────────────────────────────────────────────────
 
-const OntologyItemSchema = z.object({
-  id: z.string(),
-  category: z.string(),
-  requirement: z.string(),
-  description: z.string(),
-  keywords: z.array(z.string())
-});
+/**
+ * Extracts all complete JSON objects from a (possibly truncated) JSON array string.
+ * Parses object by object using brace counting so a cut-off response never
+ * causes a total failure — everything generated before the truncation is kept.
+ */
+function extractCompleteObjects(text: string): any[] {
+  const objects: any[] = [];
+  let depth = 0;
+  let start = -1;
 
-const OntologyOutputSchema = z.object({
-  items: z.array(OntologyItemSchema)
-});
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try {
+          const obj = JSON.parse(text.substring(start, i + 1));
+          objects.push(obj);
+        } catch {
+          // skip malformed object
+        }
+        start = -1;
+      }
+    }
+  }
+  return objects;
+}
 
-const ComparisonItemSchema = z.object({
-  itemId: z.string(),
-  status: z.enum(['covered', 'partial', 'missing']),
-  confidence: z.number().min(0).max(1),
-  evidence: z.string(),
-  suggestion: z.string()
-});
+/**
+ * Parses an ontology items response from raw text.
+ * Tries full JSON.parse first; falls back to object-by-object extraction.
+ */
+function parseOntologyResponse(raw: string): OntologyItem[] {
+  // Strip markdown fences if present
+  const cleaned = raw.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim();
 
-const ComparisonOutputSchema = z.object({
-  results: z.array(ComparisonItemSchema)
-});
+  // 1. Try standard full parse
+  try {
+    const parsed = JSON.parse(cleaned);
+    const items = parsed?.items ?? parsed;
+    if (Array.isArray(items)) {
+      return items.filter(isValidOntologyItem).map(normalizeOntologyItem);
+    }
+  } catch { /* fall through */ }
 
-// ── Service ──
+  // 2. Try extracting the "items" array substring
+  const arrMatch = cleaned.match(/"items"\s*:\s*\[/);
+  const arrStart = arrMatch ? cleaned.indexOf('[', (arrMatch.index ?? 0)) : cleaned.indexOf('[');
+  const searchText = arrStart >= 0 ? cleaned.substring(arrStart) : cleaned;
+
+  const objects = extractCompleteObjects(searchText);
+  return objects.filter(isValidOntologyItem).map(normalizeOntologyItem);
+}
+
+function isValidOntologyItem(obj: any): boolean {
+  return obj && typeof obj.id === 'string' && typeof obj.requirement === 'string';
+}
+
+function normalizeOntologyItem(obj: any): OntologyItem {
+  return {
+    id:          String(obj.id ?? ''),
+    category:    String(obj.category ?? 'General'),
+    requirement: String(obj.requirement ?? ''),
+    description: String(obj.description ?? obj.requirement ?? ''),
+    keywords:    Array.isArray(obj.keywords) ? obj.keywords.map(String) : [],
+  };
+}
+
+/**
+ * Parses a comparison results response from raw text.
+ */
+function parseComparisonResponse(raw: string): any[] {
+  const cleaned = raw.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim();
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    const results = parsed?.results ?? parsed;
+    if (Array.isArray(results)) return results;
+  } catch { /* fall through */ }
+
+  // Fallback: extract complete objects from array
+  const arrIdx = cleaned.indexOf('[');
+  const searchText = arrIdx >= 0 ? cleaned.substring(arrIdx) : cleaned;
+  return extractCompleteObjects(searchText);
+}
+
+// ── Service ────────────────────────────────────────────────────────────────
 
 export class ComparisonService {
   private ai: Genkit;
@@ -82,213 +164,253 @@ export class ComparisonService {
     this.ai = genkit({
       plugins: [
         googleAI({ apiKey }),
-        groq({ apiKey: process.env.GROQ_API_KEY })
+        groq({ apiKey: process.env.GROQ_API_KEY }),
       ],
     });
   }
 
   private async generateWithRetry(options: any, operationName: string): Promise<any> {
-    return retryWithBackoff(async () => {
-      return await this.ai.generate(options);
-    }, {
-      maxRetries: 5,
-      initialDelayMs: 15000,
-      maxDelayMs: 60000,
-      component: 'ComparisonService',
-      operationName,
-      logger
-    });
+    return retryWithBackoff(
+      async () => this.ai.generate(options),
+      {
+        maxRetries: 5,
+        initialDelayMs: 15_000,
+        maxDelayMs: 90_000,
+        component: 'ComparisonService',
+        operationName,
+        logger,
+      }
+    );
   }
 
-  /**
-   * Extracts ontology items from a normative document.
-   */
+  private safeText(text: string, label: string): string {
+    if (text.length <= MAX_CHARS_PER_DOC) return text;
+    logger.warn(
+      'Comparison',
+      `[${label}] Documento muy largo (${text.length} chars) — truncado a ${MAX_CHARS_PER_DOC} chars.`
+    );
+    return text.substring(0, MAX_CHARS_PER_DOC) + '\n\n[DOCUMENTO TRUNCADO — supera el límite de la API]';
+  }
+
+  // ── Public API ───────────────────────────────────────────────────────────
+
   async extractOntology(normativeText: string): Promise<OntologyItem[]> {
-    logger.info('Comparison', 'Extracting ontology from normative document...');
+    logger.info('Comparison', 'Extrayendo ontología del documento normativo con Gemini 2.5 Flash…');
+    const safeText = this.safeText(normativeText, 'Normativo');
 
-    // Limit text to avoid Groq 30k TPM limits (approx 70,000 chars ~ 15k-18k tokens)
-    const MAX_CHARS = 70000;
-    const safeText = normativeText.length > MAX_CHARS 
-      ? normativeText.substring(0, MAX_CHARS) + '\n\n[DOCUMENTO TRUNCADO POR LÍMITES DE API]' 
-      : normativeText;
+    const prompt = `Eres un experto en análisis de documentos normativos educativos y acreditación universitaria.
 
-    const prompt = `Eres un experto en análisis de documentos normativos educativos.
+Analiza el siguiente documento normativo en su TOTALIDAD y extrae una ontología EXHAUSTIVA de TODOS los requisitos, competencias, contenidos mínimos, criterios y estándares que establece.
 
-Analiza el siguiente documento normativo y extrae una ontología estructurada de TODOS los requisitos, competencias, contenidos mínimos, criterios y estándares que establece.
+INSTRUCCIONES:
+1. Lee y analiza el documento COMPLETO.
+2. Captura CADA requisito detectable.
+3. Categorías posibles: "Contenido Mínimo", "Competencia", "Carga Horaria", "Perfil del Egresado", "Metodología", "Evaluación", "Bibliografía", "Correlatividades", "Objetivos", "Infraestructura", "Docentes", "Investigación".
+4. Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
 
-Para cada elemento de la ontología, proporciona:
-- id: Un identificador único corto (ej: "REQ-001", "COMP-003")
-- category: La categoría del requisito (ej: "Contenido Mínimo", "Competencia", "Carga Horaria", "Perfil del Egresado", "Metodología", "Evaluación", "Bibliografía", "Correlatividades", "Objetivos")
-- requirement: El requisito en forma concisa
-- description: Descripción detallada del requisito
-- keywords: Palabras clave asociadas para facilitar la comparación
-
-Sé exhaustivo. Extrae TODOS los puntos relevantes del documento normativo.
+{"items": [
+  {
+    "id": "REQ-001",
+    "category": "Contenido Mínimo",
+    "requirement": "Requisito conciso",
+    "description": "Descripción detallada",
+    "keywords": ["palabra1", "palabra2"]
+  }
+]}
 
 DOCUMENTO NORMATIVO:
 ${safeText}`;
 
-    const response = await this.generateWithRetry({
-      model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
-      prompt,
-      output: { format: 'json', schema: OntologyOutputSchema },
-      config: { maxOutputTokens: 2048 }
-    }, 'extractOntology');
+    const response = await this.generateWithRetry(
+      {
+        model: MODEL_FLASH,
+        prompt,
+        output: { format: 'text' },
+        config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+      },
+      'extractOntology'
+    );
 
-    const data = response.output;
-    if (!data || !data.items) {
-      throw new Error('No se pudo extraer la ontología del documento normativo');
+    const rawText = response.text ?? '';
+    const items = parseOntologyResponse(rawText);
+
+    if (items.length === 0) {
+      throw new Error('No se pudo extraer ningún ítem de la ontología normativa');
     }
 
-    logger.info('Comparison', `Ontología extraída: ${data.items.length} elementos`);
-    return data.items;
+    logger.info('Comparison', `✅ Ontología normativa extraída: ${items.length} elementos`);
+    return items;
   }
 
-  /**
-   * Compares a program document against an extracted ontology.
-   */
-  async compareWithProgram(
-    ontology: OntologyItem[],
-    programText: string
-  ): Promise<ComparisonResult[]> {
-    logger.info('Comparison', `Comparando programa exhaustivamente contra ${ontology.length} elementos de la ontología...`);
+  async extractProgramOntology(programText: string): Promise<OntologyItem[]> {
+    logger.info('Comparison', 'Extrayendo ontología del programa con Gemini 2.5 Flash…');
+    const safeText = this.safeText(programText, 'Programa');
 
-    // Process in batches to avoid token limits
-    const batchSize = 15;
-    const allResults: ComparisonResult[] = [];
+    const prompt = `Eres un experto en análisis de programas educativos universitarios (sílabos).
 
-    // Chunk the program text into parts of ~40,000 characters (~10k tokens)
-    const MAX_CHUNK_CHARS = 40000;
-    const programChunks: string[] = [];
-    for (let i = 0; i < programText.length; i += MAX_CHUNK_CHARS) {
-      programChunks.push(programText.substring(i, i + MAX_CHUNK_CHARS));
-    }
-    
-    logger.info('Comparison', `El programa se ha dividido en ${programChunks.length} partes para un análisis profundo.`);
+Analiza el siguiente programa de materia en su TOTALIDAD y extrae una ontología EXHAUSTIVA de TODOS sus contenidos, objetivos, metodologías, evaluaciones, bibliografía y demás elementos educativos.
 
-    for (let i = 0; i < ontology.length; i += batchSize) {
-      const batch = ontology.slice(i, i + batchSize);
-      
-      const bestResults = new Map<string, ComparisonResult>();
+INSTRUCCIONES:
+1. Lee y analiza el documento COMPLETO.
+2. Captura CADA contenido, tema, objetivo o requisito detectable.
+3. Categorías posibles: "Contenido", "Objetivo General", "Objetivo Específico", "Metodología", "Evaluación", "Bibliografía Obligatoria", "Bibliografía Complementaria", "Carga Horaria", "Correlativas", "Perfil del Graduado", "Actividades Profesionales Reservadas", "Alcances del Título", "Estructura Curricular", "Proyectos Integradores".
+4. Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
 
-      for (let j = 0; j < programChunks.length; j++) {
-        const chunk = programChunks[j];
-        logger.info('Comparison', `Evaluando lote de items ${Math.floor(i/batchSize) + 1} contra parte ${j + 1}/${programChunks.length} del programa...`);
-        
-        const chunkResults = await this.compareBatch(batch, chunk);
-        
-        // Merge results: keep the best status (covered > partial > missing)
-        for (const res of chunkResults) {
-          const existing = bestResults.get(res.item.id);
-          if (!existing) {
-            bestResults.set(res.item.id, res);
-          } else {
-            const statusValue = { 'covered': 3, 'partial': 2, 'missing': 1 };
-            if (statusValue[res.status] > statusValue[existing.status]) {
-              bestResults.set(res.item.id, res);
-            } else if (statusValue[res.status] === statusValue[existing.status] && existing.status !== 'missing') {
-              existing.evidence += `\n[Parte ${j+1}]: ` + res.evidence;
-            }
-          }
-        }
-
-        // Wait between chunks to respect the 30k TPM rate limit of Groq's free tier
-        if (j < programChunks.length - 1) {
-          logger.info('Comparison', 'Esperando 25 segundos para respetar el límite de tokens por minuto (TPM) de Groq...');
-          await new Promise(resolve => setTimeout(resolve, 25000));
-        }
-      }
-
-      allResults.push(...Array.from(bestResults.values()));
-
-      // Add a delay between batches of items
-      if (i + batchSize < ontology.length) {
-        logger.info('Comparison', 'Esperando 25 segundos antes de evaluar el siguiente lote de requisitos...');
-        await new Promise(resolve => setTimeout(resolve, 25000));
-      }
-    }
-
-    return allResults;
+{"items": [
+  {
+    "id": "PROG-CONT-001",
+    "category": "Contenido",
+    "requirement": "Tema o punto conciso",
+    "description": "Descripción detallada",
+    "keywords": ["palabra1", "palabra2"]
   }
-
-  private async compareBatch(
-    items: OntologyItem[],
-    programText: string
-  ): Promise<ComparisonResult[]> {
-    const itemsList = items.map(item =>
-      `- ID: ${item.id} | Categoría: ${item.category} | Requisito: ${item.requirement} | Descripción: ${item.description} | Keywords: ${item.keywords.join(', ')}`
-    ).join('\n');
-
-    const prompt = `Eres un experto en evaluación de programas educativos.
-
-Compara el siguiente PROGRAMA DE MATERIA con los requisitos de la ontología normativa listados abajo.
-
-Para CADA requisito, determina:
-- itemId: El ID del requisito
-- status: "covered" si el programa lo cubre adecuadamente, "partial" si lo cubre parcialmente, "missing" si no lo cubre
-- confidence: Tu nivel de confianza en la evaluación (0 a 1)
-- evidence: Cita o referencia del texto del programa que respalda tu evaluación (si es "missing", indica qué falta)
-- suggestion: Sugerencia concreta para mejorar la cobertura (si es "covered", puedes dejar vacío o confirmar)
-
-REQUISITOS DE LA ONTOLOGÍA NORMATIVA:
-${itemsList}
+]}
 
 PROGRAMA DE LA MATERIA:
-${programText}`;
+${safeText}`;
 
-    const response = await this.generateWithRetry({
-      model: 'groq/meta-llama/llama-4-scout-17b-16e-instruct',
-      prompt,
-      output: { format: 'json', schema: ComparisonOutputSchema },
-      config: { maxOutputTokens: 2048 }
-    }, 'compareBatch');
+    const response = await this.generateWithRetry(
+      {
+        model: MODEL_FLASH,
+        prompt,
+        output: { format: 'text' },
+        config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+      },
+      'extractProgramOntology'
+    );
 
-    const data = response.output;
-    if (!data || !data.results) return [];
+    const rawText = response.text ?? '';
+    const items = parseOntologyResponse(rawText);
 
-    // Merge results with ontology items
-    return data.results.map((r: any) => {
-      const item = items.find(i => i.id === r.itemId) || items[0];
-      return {
-        item,
-        status: r.status,
-        confidence: r.confidence,
-        evidence: r.evidence,
-        suggestion: r.suggestion
-      };
-    });
+    if (items.length === 0) {
+      throw new Error('No se pudo extraer ningún ítem de la ontología del programa');
+    }
+
+    logger.info('Comparison', `✅ Ontología del programa extraída: ${items.length} elementos`);
+    return items;
   }
 
-  /**
-   * Full comparison pipeline: extract ontology + compare.
-   */
+  async compareOntologies(
+    normativeOntology: OntologyItem[],
+    programOntology: OntologyItem[]
+  ): Promise<ComparisonResult[]> {
+    logger.info(
+      'Comparison',
+      `Comparando holísticamente: ${normativeOntology.length} normativos vs ${programOntology.length} del programa…`
+    );
+
+    const normativeList = normativeOntology
+      .map(
+        (item) =>
+          `ID: ${item.id} | Categoría: ${item.category} | Requisito: ${item.requirement} | Descripción: ${item.description} | Keywords: ${(item.keywords || []).join(', ')}`
+      )
+      .join('\n');
+
+    const programList = programOntology
+      .map(
+        (item) =>
+          `- [${item.category}] ${item.requirement}: ${item.description} (Keywords: ${(item.keywords || []).join(', ')})`
+      )
+      .join('\n');
+
+    const prompt = `Eres un experto en evaluación de programas educativos universitarios y análisis de similitud semántica.
+
+Evalúa el CUMPLIMIENTO NORMATIVO de un programa frente a ${normativeOntology.length} requisitos normativos.
+
+Para CADA requisito normativo (hay exactamente ${normativeOntology.length}), determina:
+- itemId: ID del requisito normativo
+- status: "covered" (cubierto completamente) | "partial" (cubierto parcialmente) | "missing" (ausente)
+- confidence: número entre 0.0 y 1.0
+- evidence: qué elementos del programa lo cubren o qué falta
+- suggestion: sugerencia concreta para mejorar (o "Ninguna" si está cubierto)
+
+Usa razonamiento semántico: un requisito puede estar cubierto aunque se exprese con palabras diferentes.
+
+Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
+
+{"results": [
+  {
+    "itemId": "REQ-001",
+    "status": "covered",
+    "confidence": 0.9,
+    "evidence": "...",
+    "suggestion": "Ninguna"
+  }
+]}
+
+═══════════════════════════════════════════════════════════
+REQUISITOS NORMATIVOS (${normativeOntology.length} items):
+═══════════════════════════════════════════════════════════
+${normativeList}
+
+═══════════════════════════════════════════════════════════
+PROGRAMA DE LA MATERIA (${programOntology.length} items):
+═══════════════════════════════════════════════════════════
+${programList}`;
+
+    const response = await this.generateWithRetry(
+      {
+        model: MODEL_FLASH,
+        prompt,
+        output: { format: 'text' },
+        config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+      },
+      'compareOntologies'
+    );
+
+    const rawText = response.text ?? '';
+    const rawResults = parseComparisonResponse(rawText);
+
+    logger.info('Comparison', `✅ Comparación completada: ${rawResults.length} evaluaciones recibidas de ${normativeOntology.length} esperadas`);
+
+    return rawResults
+      .filter((r: any) => r.itemId && r.status)
+      .map((r: any) => {
+        const item = normativeOntology.find((i) => i.id === r.itemId) || normativeOntology[0];
+        return {
+          item,
+          status: r.status as 'covered' | 'partial' | 'missing',
+          confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
+          evidence: String(r.evidence ?? ''),
+          suggestion: String(r.suggestion ?? ''),
+        };
+      });
+  }
+
   async fullComparison(
     normativeText: string,
     programText: string,
     normativeName: string,
     programName: string
   ): Promise<ComparisonReport> {
-    const ontology = await this.extractOntology(normativeText);
-    const results = await this.compareWithProgram(ontology, programText);
+    logger.info('Comparison', `Iniciando comparación: "${normativeName}" vs "${programName}"`);
+    logger.info('Comparison', `Normativo: ${normativeText.length} chars | Programa: ${programText.length} chars`);
 
-    const covered = results.filter(r => r.status === 'covered').length;
-    const partial = results.filter(r => r.status === 'partial').length;
-    const missing = results.filter(r => r.status === 'missing').length;
-    const total = results.length;
+    const ontology        = await this.extractOntology(normativeText);
+    const programOntology = await this.extractProgramOntology(programText);
+    const results         = await this.compareOntologies(ontology, programOntology);
+
+    const covered = results.filter((r) => r.status === 'covered').length;
+    const partial = results.filter((r) => r.status === 'partial').length;
+    const missing = results.filter((r) => r.status === 'missing').length;
+    const total   = results.length;
+
+    const coveragePercent = total > 0
+      ? Math.round(((covered + partial * 0.5) / total) * 100)
+      : 0;
+
+    logger.info(
+      'Comparison',
+      `📊 Resumen: ${covered} cubiertos | ${partial} parciales | ${missing} faltantes | Cumplimiento: ${coveragePercent}%`
+    );
 
     return {
       normativeDocument: normativeName,
       programDocument: programName,
       ontology,
       results,
-      summary: {
-        total,
-        covered,
-        partial,
-        missing,
-        coveragePercent: total > 0 ? Math.round((covered + partial * 0.5) / total * 100) : 0
-      },
-      timestamp: new Date().toISOString()
+      summary: { total, covered, partial, missing, coveragePercent },
+      timestamp: new Date().toISOString(),
     };
   }
 }

@@ -121,15 +121,18 @@ export async function startServer() {
       const session = neo4jDriver.session({ defaultAccessMode: neo4jModule.default.session.READ });
 
       try {
-        // Get all nodes
+        // Get nodes that are part of the ontology or comparison
         const nodesResult = await session.run(`
           MATCH (n)
+          WHERE n:NormativeDocument OR n:ProgramDocument OR n:OntologyItem
           RETURN n, labels(n) AS labels, elementId(n) AS elementId
         `);
 
-        // Get all relationships
+        // Get relationships between those specific nodes
         const relsResult = await session.run(`
           MATCH (a)-[r]->(b)
+          WHERE (a:NormativeDocument OR a:ProgramDocument OR a:OntologyItem)
+            AND (b:NormativeDocument OR b:ProgramDocument OR b:OntologyItem)
           RETURN type(r) AS type, 
                  properties(r) AS props,
                  elementId(a) AS sourceId, 
