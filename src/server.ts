@@ -21,7 +21,7 @@ import { EntityType } from './models/genkit.types';
 
 const logger = createLogger();
 
-export async function startServer() {
+export async function createServerApp() {
   logger.info('Server', 'Starting PDF Knowledge Graph Server');
 
   // 1. Initialize Configuration
@@ -392,7 +392,11 @@ export async function startServer() {
     }
   });
 
-  // 4. Start listening
+  return app;
+}
+
+export async function startServer() {
+  const app = await createServerApp();
   const PORT = parseInt(process.env.PORT || '3000', 10);
   app.listen(PORT, () => {
     logger.info('Server', `🚀 Web server running at http://localhost:${PORT}`);

@@ -38,21 +38,21 @@ export class PDFProcessorImpl implements PDFProcessor {
       // Check if main folder exists, create if not
       await fs.access(this.pdfFolderPath);
     } catch {
-      await fs.mkdir(this.pdfFolderPath, { recursive: true });
+      try { await fs.mkdir(this.pdfFolderPath, { recursive: true }); } catch (e) { /* ignore read-only fs error */ }
     }
 
     // Create processed subfolder if it doesn't exist
     try {
       await fs.access(this.processedSubfolder);
     } catch {
-      await fs.mkdir(this.processedSubfolder, { recursive: true });
+      try { await fs.mkdir(this.processedSubfolder, { recursive: true }); } catch (e) { /* ignore */ }
     }
 
     // Create failed subfolder if it doesn't exist
     try {
       await fs.access(this.failedSubfolder);
     } catch {
-      await fs.mkdir(this.failedSubfolder, { recursive: true });
+      try { await fs.mkdir(this.failedSubfolder, { recursive: true }); } catch (e) { /* ignore */ }
     }
   }
 
