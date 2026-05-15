@@ -336,12 +336,13 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
 
     return this.executeWrite(async (session) => {
       await session.run(`
-        MERGE (d:Entity:Document:NormativeDocument {name: $name})
+        MERGE (d:Entity {name: $name})
         ON CREATE SET d.createdAt = datetime(), d.type = 'DOCUMENT'
+        SET d:Document:NormativeDocument
       `, { name: report.normativeDocument });
 
       await session.run(`
-        MERGE (d:Entity:Document:ProgramDocument {name: $name})
+        MERGE (d:Entity {name: $name})
         ON CREATE SET
           d.createdAt = datetime(),
           d.type = 'DOCUMENT',
@@ -356,8 +357,10 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
           d.partial = $partial,
           d.missing = $missing,
           d.coveragePercent = $coveragePercent
+        SET d:Document:ProgramDocument
         WITH d
-        MATCH (n:NormativeDocument {name: $normativeDocument})
+        MATCH (n:Entity {name: $normativeDocument})
+        WHERE n:NormativeDocument
         MERGE (d)-[:COMPARED_TO]->(n)
       `, {
         name: report.programDocument,
@@ -372,8 +375,9 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
       for (const item of report.ontology) {
         const uniqueName = `${report.normativeDocument}_${item.id}`;
         await session.run(`
-          MATCH (d:NormativeDocument {name: $docName})
-          MERGE (o:Entity:OntologyItem {name: $uniqueName})
+          MATCH (d:Entity {name: $docName})
+          WHERE d:NormativeDocument
+          MERGE (o:Entity {name: $uniqueName})
           ON CREATE SET
             o.id = $itemId,
             o.requirement = $requirement,
@@ -389,6 +393,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
             o.description = $description,
             o.keywords = $keywords,
             o.sourceText = $description
+          SET o:OntologyItem
           MERGE (o)-[:EXTRACTED_FROM]->(d)
         `, {
           docName: report.normativeDocument,
@@ -404,14 +409,16 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
       for (const res of report.results) {
         const uniqueName = `${report.normativeDocument}_${res.item.id}`;
         await session.run(`
-          MATCH (p:ProgramDocument {name: $progName})
-          MATCH (o:OntologyItem {name: $uniqueName})
+          MATCH (p:Entity {name: $progName})
+          WHERE p:ProgramDocument
+          MATCH (o:Entity {name: $uniqueName})
+          WHERE o:OntologyItem
           MERGE (p)-[r:EVALUATED_AGAINST]->(o)
           SET r.status = $status,
-              r.confidence = $confidence,
-              r.evidence = $evidence,
-              r.suggestion = $suggestion,
-              r.updatedAt = datetime()
+          r.confidence = $confidence,
+          r.evidence = $evidence,
+          r.suggestion = $suggestion,
+          r.updatedAt = datetime()
         `, {
           progName: report.programDocument,
           uniqueName,

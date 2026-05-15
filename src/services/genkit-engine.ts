@@ -10,7 +10,6 @@
 
 import { genkit, Genkit, Document } from 'genkit';
 import { googleAI } from '@genkit-ai/google-genai';
-import { groq } from 'genkitx-groq';
 import { neo4j, neo4jIndexerRef, neo4jRetrieverRef } from 'genkitx-neo4j';
 import { z } from 'zod';
 import {
@@ -65,7 +64,6 @@ export class GenkitEngineImpl implements GenkitEngine {
       this.ai = genkit({
         plugins: [
           googleAI({ apiKey: config.apiKey }),
-          groq({ apiKey: process.env.GROQ_API_KEY }),
           // ── Neo4j Agent Skills plugin ─────────────────────────────────────
           // Configures the genkitx-neo4j vector store. Connection details are
           // read from NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD env vars, or

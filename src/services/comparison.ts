@@ -16,7 +16,6 @@
 
 import { genkit, Genkit } from 'genkit';
 import { googleAI } from '@genkit-ai/google-genai';
-import { groq } from 'genkitx-groq';
 import { Agent, setGlobalDispatcher } from 'undici';
 import { createLogger } from './logger';
 import { retryWithBackoff } from '../utils/retry';
@@ -173,7 +172,6 @@ export class ComparisonService {
     this.ai = genkit({
       plugins: [
         googleAI({ apiKey }),
-        groq({ apiKey: process.env.GROQ_API_KEY }),
       ],
     });
   }
