@@ -395,6 +395,17 @@ export async function createServerApp() {
   return app;
 }
 
+// Global promise to cache the app initialization for Serverless environments
+let appPromise: Promise<express.Express>;
+
+export default async function handler(req: Request, res: Response) {
+  if (!appPromise) {
+    appPromise = createServerApp();
+  }
+  const app = await appPromise;
+  return app(req, res);
+}
+
 export async function startServer() {
   const app = await createServerApp();
   const PORT = parseInt(process.env.PORT || '3000', 10);

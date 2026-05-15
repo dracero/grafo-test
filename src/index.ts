@@ -5,6 +5,10 @@
  */
 
 import { startServer } from './server';
+import handler from './server';
+
+// Export handler for Vercel
+export default handler;
 
 // Start the application with web server
 if (require.main === module) {
