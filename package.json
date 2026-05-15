@@ -43,8 +43,10 @@
     "express": "^5.2.1",
     "fast-check": "^4.8.0",
     "genkitx-groq": "^0.30.0",
+    "genkitx-neo4j": "^0.5.17",
     "multer": "^2.1.1",
     "neo4j-driver": "^6.0.1",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "undici": "^8.3.0"
   }
 }

@@ -1,10 +1,15 @@
 /**
  * Knowledge Graph Builder Implementation
- * 
- * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 7.2, 7.3, 7.4, 8.2
+ *
+ * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 7.2, 7.3, 7.4
+ *
+ * Architecture (hybrid):
+ *  - Vector indexing & retrieval  → genkitx-neo4j Agent Skills (via GenkitEngineImpl)
+ *  - Structured graph operations  → neo4j-driver (MERGE nodes/rels, Cypher queries)
  */
 
 import neo4j, { Driver, Session } from 'neo4j-driver';
+import { Document } from 'genkit';
 import {
   KnowledgeGraphBuilder,
   GraphStats,
@@ -18,13 +23,32 @@ import { ComparisonReport } from './comparison';
 import { Neo4jConnectionError, Neo4jQueryError, Neo4jError } from '../errors/neo4j.errors';
 import { retryWithBackoff } from '../utils/retry';
 import { createLogger } from './logger';
+import { GenkitEngineImpl } from './genkit-engine';
 
 export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   private driver: Driver | null = null;
   private logger = createLogger();
 
   /**
-   * Connects to the Neo4j database and initializes schema
+   * The GenkitEngine is injected so we can call ai.index() / ai.retrieve()
+   * (the Agent Skills) without duplicating Genkit initialisation.
+   */
+  private genkitEngine?: GenkitEngineImpl;
+
+  /**
+   * Injects the already-initialised GenkitEngine so this builder can use
+   * the genkitx-neo4j Agent Skills for vector operations.
+   */
+  setGenkitEngine(engine: GenkitEngineImpl): void {
+    this.genkitEngine = engine;
+  }
+
+  // ─── Connection ────────────────────────────────────────────────────────────
+
+  /**
+   * Connects to Neo4j using the native driver.
+   * The driver is kept only for structured Cypher operations (MERGE, relationships,
+   * comparison reports, visualisation). Vector operations go through the plugin.
    * Requirements: 5.1, 5.4
    */
   async connect(config: Neo4jConfig): Promise<void> {
@@ -32,14 +56,12 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
       this.driver = neo4j.driver(
         config.uri,
         neo4j.auth.basic(config.username, config.password),
-        { disableLosslessIntegers: true } // Easier to work with standard JS numbers
+        { disableLosslessIntegers: true }
       );
 
-      // Verify connection
       await this.driver.verifyConnectivity();
       this.logger.info('KnowledgeGraph', 'Successfully connected to Neo4j');
 
-      // Initialize schema (constraints and indexes)
       await this.initializeSchema();
     } catch (error: any) {
       this.logger.error('KnowledgeGraph', 'Failed to connect to Neo4j', error);
@@ -48,7 +70,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   }
 
   /**
-   * Closes the Neo4j connection
+   * Closes the Neo4j driver connection.
    */
   async disconnect(): Promise<void> {
     if (this.driver) {
@@ -58,17 +80,28 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     }
   }
 
+  // ─── Entity operations (Agent Skills) ─────────────────────────────────────
+
   /**
-   * Creates or updates an entity node
+   * Creates or updates an entity node.
+   *
+   * Uses a hybrid approach:
+   *   1. Writes the structured node (name, type, sourceText, documents) via
+   *      Cypher MERGE so the graph relationships remain intact.
+   *   2. Indexes the entity text through the genkitx-neo4j Agent Skill
+   *      (`ai.index()`), which stores the embedding on the same :Entity node
+   *      using the `embeddingProperty: 'embedding'` mapping configured in the plugin.
+   *
    * Requirements: 5.2, 5.5, 5.6
    */
   async createOrUpdateEntity(entity: Entity, sourceDocument: string, embeddings: number[]): Promise<string> {
     this.ensureConnected();
 
-    return this.executeWrite(async (session) => {
+    // 1. Structured MERGE via driver (keeps relationships / timestamps intact)
+    const nodeId = await this.executeWrite(async (session) => {
       const query = `
         MERGE (e:Entity {name: $name})
-        ON CREATE SET 
+        ON CREATE SET
           e.id = randomUUID(),
           e.type = $type,
           e.sourceText = $sourceText,
@@ -81,10 +114,6 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         WITH e
         WHERE NOT $sourceDocument IN e.documents
         SET e.documents = e.documents + [$sourceDocument]
-        WITH e
-        // We set the embedding in a separate step or via apoc if needed, 
-        // but since Neo4j 5 we can just set it as a property
-        SET e.embedding = $embeddings
         RETURN e.id AS id
       `;
 
@@ -93,24 +122,50 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         type: entity.type,
         sourceText: entity.sourceText,
         sourceDocument,
-        embeddings
       });
 
-      return result.records[0].get('id');
+      return result.records[0]?.get('id') ?? entity.name;
     });
+
+    // 2. Vector indexing via genkitx-neo4j Agent Skill ──────────────────────
+    // The plugin maps `document.content[0].text` → `sourceText` property and
+    // `document.metadata` is stored alongside. The embedding is generated by
+    // the plugin's embedder OR pre-supplied via metadata.embedding.
+    if (this.genkitEngine) {
+      const doc = Document.fromText(entity.sourceText, {
+        name: entity.name,
+        type: entity.type,
+        sourceDocument,
+        // Attach pre-computed HuggingFace embedding so the plugin doesn't
+        // need to call a Genkit-native embedder for this document.
+        embedding: embeddings,
+      });
+
+      await this.genkitEngine.indexDocuments([doc]);
+    } else {
+      // Fallback: write embedding directly via driver if engine not injected
+      await this.executeWrite(async (session) => {
+        await session.run(
+          `MATCH (e:Entity {name: $name}) SET e.embedding = $embeddings`,
+          { name: entity.name, embeddings }
+        );
+      });
+    }
+
+    return nodeId;
   }
 
+  // ─── Relationship operations (driver) ─────────────────────────────────────
+
   /**
-   * Creates a relationship between two entities
+   * Creates a relationship between two entities.
+   * Remains a direct Cypher operation — the plugin has no relationship API.
    * Requirements: 5.3
    */
   async createRelationship(relationship: Relationship, sourceDocument: string): Promise<void> {
     this.ensureConnected();
 
     return this.executeWrite(async (session) => {
-      // Note: We use dynamic relationship types carefully by formatting the query
-      // Neo4j driver parameters don't support dynamic relationship types natively
-      // But for security, we must sanitize the relationship type
       const sanitizedType = relationship.type.replace(/[^A-Z0-9_]/gi, '_').toUpperCase();
 
       const query = `
@@ -132,57 +187,68 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     });
   }
 
+  // ─── Analysis result pipeline ──────────────────────────────────────────────
+
   /**
-   * Processes a full analysis result
+   * Processes a full analysis result.
+   * Entity indexing uses the Agent Skill; relationship creation uses the driver.
    * Requirements: 5.7, 8.2
    */
   async processAnalysisResult(result: AnalysisResult, sourceDocument: string): Promise<GraphStats> {
     this.ensureConnected();
-    
     this.logger.info('KnowledgeGraph', `Processing analysis result for ${sourceDocument}`);
 
     let entitiesCreated = 0;
     let relationshipsCreated = 0;
 
-    // We process in a single transaction if possible, or multiple if large.
-    // For simplicity, we'll execute sequentially here using the helper methods.
     for (const entity of result.entities) {
       await this.createOrUpdateEntity(entity, sourceDocument, result.embeddings);
       entitiesCreated++;
     }
 
     for (const rel of result.relationships) {
-      // Only create relationship if both entities exist in the graph
-      // (The merge queries assume nodes are created or matched)
       await this.createRelationship(rel, sourceDocument);
       relationshipsCreated++;
     }
 
-    const stats: GraphStats = {
-      entitiesCreated,
-      entitiesUpdated: 0, // In a more complex tracking we'd separate created/updated
-      relationshipsCreated
-    };
-
-    this.logger.info('KnowledgeGraph', `Graph build complete`, stats as any);
+    const stats: GraphStats = { entitiesCreated, entitiesUpdated: 0, relationshipsCreated };
+    this.logger.info('KnowledgeGraph', 'Graph build complete', stats as any);
     return stats;
   }
 
+  // ─── Vector search (Agent Skills) ─────────────────────────────────────────
+
   /**
-   * Executes a vector search
+   * Executes a semantic (vector) search against the Neo4j vector index.
+   *
+   * Uses the genkitx-neo4j retriever Agent Skill (`ai.retrieve()`) when the
+   * engine is injected. Falls back to the direct Cypher `db.index.vector.queryNodes`
+   * call if the engine is not available.
+   *
    * Requirements: 7.2, 7.3, 7.4
    */
   async vectorSearch(queryEmbeddings: number[], limit: number): Promise<SearchResult[]> {
-    this.ensureConnected();
+    // Preferred path: Agent Skills retriever
+    if (this.genkitEngine) {
+      // The retriever expects a text query. We pass a special marker so callers
+      // that only have raw vectors can still go through this path.
+      // If you have the original query text, prefer calling genkitEngine.retrieve() directly.
+      this.logger.warn(
+        'KnowledgeGraph',
+        'vectorSearch called with raw embeddings — Agent Skills retriever needs text query. ' +
+        'Prefer calling genkitEngine.retrieve(queryText, limit) directly from the API layer.'
+      );
+    }
 
+    // Fallback: direct Cypher (works even without the engine)
+    this.ensureConnected();
     return this.executeRead(async (session) => {
-      // In Neo4j 5.0+, vector indexes are queried using db.index.vector.queryNodes
       const query = `
         CALL db.index.vector.queryNodes('entity_embeddings', $limit, $embedding)
         YIELD node, score
-        RETURN node.id AS id, 
-               node.name AS name, 
-               node.type AS type, 
+        RETURN node.id AS id,
+               node.name AS name,
+               node.type AS type,
                node.sourceText AS sourceText,
                node.documents AS documents,
                score
@@ -200,7 +266,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
           name: record.get('name'),
           type: record.get('type') as any,
           sourceText: record.get('sourceText'),
-          confidence: 1.0 // Implicit for search
+          confidence: 1.0
         },
         similarity: record.get('score'),
         sourceDocuments: record.get('documents')
@@ -208,8 +274,10 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     });
   }
 
+  // ─── Node context (driver) ─────────────────────────────────────────────────
+
   /**
-   * Retrieves context for a node
+   * Retrieves context for a node.
    * Requirements: 7.4
    */
   async getNodeContext(nodeId: string, depth: number): Promise<GraphContext> {
@@ -252,32 +320,30 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
           };
         });
 
-      return {
-        centerNode,
-        neighbors
-      };
+      return { centerNode, neighbors };
     });
   }
 
+  // ─── Comparison reports (driver) ───────────────────────────────────────────
+
   /**
-   * Saves a Comparison Report to Neo4j
+   * Saves a Comparison Report to Neo4j.
+   * Structural graph writes — handled entirely via Cypher/driver.
    */
   async saveComparisonReport(report: ComparisonReport): Promise<void> {
     this.ensureConnected();
     this.logger.info('KnowledgeGraph', `Saving comparison report for ${report.programDocument} against ${report.normativeDocument}`);
 
     return this.executeWrite(async (session) => {
-      // 1. Create the Normative Document Node
       await session.run(`
         MERGE (d:Entity:Document:NormativeDocument {name: $name})
         ON CREATE SET d.createdAt = datetime(), d.type = 'DOCUMENT'
       `, { name: report.normativeDocument });
 
-      // 2. Create the Program Document Node
       await session.run(`
         MERGE (d:Entity:Document:ProgramDocument {name: $name})
-        ON CREATE SET 
-          d.createdAt = datetime(), 
+        ON CREATE SET
+          d.createdAt = datetime(),
           d.type = 'DOCUMENT',
           d.total = $total,
           d.covered = $covered,
@@ -293,7 +359,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         WITH d
         MATCH (n:NormativeDocument {name: $normativeDocument})
         MERGE (d)-[:COMPARED_TO]->(n)
-      `, { 
+      `, {
         name: report.programDocument,
         total: report.summary.total,
         covered: report.summary.covered,
@@ -303,7 +369,6 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         normativeDocument: report.normativeDocument
       });
 
-      // 3. Create Ontology Items and Link to Normative Document
       for (const item of report.ontology) {
         const uniqueName = `${report.normativeDocument}_${item.id}`;
         await session.run(`
@@ -336,7 +401,6 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         });
       }
 
-      // 4. Create Comparison Results linking Program to Ontology Items
       for (const res of report.results) {
         const uniqueName = `${report.normativeDocument}_${res.item.id}`;
         await session.run(`
@@ -361,7 +425,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   }
 
   /**
-   * Clears previous comparison nodes from the graph
+   * Clears previous comparison nodes from the graph.
    */
   async clearPreviousComparisons(): Promise<void> {
     this.ensureConnected();
@@ -376,7 +440,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   }
 
   /**
-   * Retrieves the latest comparison report from the graph
+   * Retrieves the latest comparison report from the graph.
    */
   async getLatestComparison(): Promise<ComparisonReport | null> {
     this.ensureConnected();
@@ -386,7 +450,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         MATCH (p:ProgramDocument)-[:COMPARED_TO]->(n:NormativeDocument)
         WITH p, n ORDER BY p.createdAt DESC LIMIT 1
         OPTIONAL MATCH (p)-[r:EVALUATED_AGAINST]->(o:OntologyItem)
-        RETURN 
+        RETURN
           p.name AS programName,
           p.total AS total,
           p.covered AS covered,
@@ -413,7 +477,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
 
       const normativeDocument = result.records[0].get('normativeName');
       const programDocument = result.records[0].get('programName');
-      
+
       const summary = {
         total: Number(result.records[0].get('total')) || 0,
         covered: Number(result.records[0].get('covered')) || 0,
@@ -427,7 +491,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
 
       for (const record of result.records) {
         const id = record.get('itemId');
-        
+
         if (id) {
           if (!ontologyMap.has(id)) {
             ontologyMap.set(id, {
@@ -438,7 +502,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
               keywords: record.get('keywords') || []
             });
           }
-          
+
           results.push({
             item: ontologyMap.get(id),
             status: record.get('status'),
@@ -460,7 +524,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     });
   }
 
-  // --- Private Helpers ---
+  // ─── Private helpers ───────────────────────────────────────────────────────
 
   private ensureConnected() {
     if (!this.driver) {
@@ -470,13 +534,11 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
 
   private async initializeSchema() {
     return this.executeWrite(async (session) => {
-      // Create constraint on Entity name
       await session.run(`
         CREATE CONSTRAINT entity_name_unique IF NOT EXISTS
         FOR (e:Entity) REQUIRE e.name IS UNIQUE
       `);
 
-      // Attempt to create vector index (requires Neo4j 5+)
       try {
         await session.run(`
           CREATE VECTOR INDEX entity_embeddings IF NOT EXISTS

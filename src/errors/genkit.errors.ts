@@ -14,11 +14,14 @@ export interface RequestDetails {
   /** API endpoint that was called */
   endpoint: string;
   
-  /** Length of text being processed */
-  textLength: number;
+  /** Length of text being processed (optional for non-text requests) */
+  textLength?: number;
   
   /** Timestamp when the request was made */
   timestamp: Date;
+
+  /** Additional details specific to the request type */
+  additionalInfo?: Record<string, any>;
 }
 
 /**
@@ -97,7 +100,8 @@ export class GenkitAPIError extends Error {
   toDetailedString(): string {
     return `${this.name} [${this.statusCode}]: ${this.message}
   Endpoint: ${this.requestDetails.endpoint}
-  Text Length: ${this.requestDetails.textLength}
+  Text Length: ${this.requestDetails.textLength ?? 'N/A'}
+  Additional Info: ${this.requestDetails.additionalInfo ? JSON.stringify(this.requestDetails.additionalInfo) : 'None'}
   Timestamp: ${this.requestDetails.timestamp.toISOString()}
   Recoverable: ${this.isRecoverable}`;
   }

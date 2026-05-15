@@ -17,8 +17,17 @@
 import { genkit, Genkit } from 'genkit';
 import { googleAI } from '@genkit-ai/google-genai';
 import { groq } from 'genkitx-groq';
+import { Agent, setGlobalDispatcher } from 'undici';
 import { createLogger } from './logger';
 import { retryWithBackoff } from '../utils/retry';
+
+// Configure global dispatcher to prevent HeadersTimeoutError during long comparisons
+setGlobalDispatcher(new Agent({
+  headersTimeout: 600_000, // 10 minutes
+  bodyTimeout: 600_000,    // 10 minutes
+  keepAliveTimeout: 60_000,
+  connections: 20,
+}));
 
 const logger = createLogger();
 

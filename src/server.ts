@@ -54,6 +54,10 @@ export async function startServer() {
   const graphBuilder = new KnowledgeGraphBuilderImpl();
   await graphBuilder.connect(config.neo4j);
 
+  // Inject the Genkit engine so the graph builder can use the
+  // genkitx-neo4j Agent Skills for vector indexing & retrieval.
+  graphBuilder.setGenkitEngine(genkitEngine);
+
   const visualizationService = new VisualizationServiceImpl();
   await visualizationService.connect(config.neo4j);
 
@@ -258,8 +262,9 @@ export async function startServer() {
         return res.status(400).json({ success: false, error: 'Query is required' });
       }
 
-      const queryEmbeddings = await genkitEngine.generateQueryEmbeddings(query);
-      const results = await graphBuilder.vectorSearch(queryEmbeddings, limit);
+      // ── Uses genkitx-neo4j Agent Skills retriever (text-based) ──────────
+      // This replaces the manual embedding → raw vectorSearch() flow.
+      const results = await genkitEngine.retrieve(query, limit);
 
       res.json({ success: true, data: results });
     } catch (error: any) {
