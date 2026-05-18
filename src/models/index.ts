@@ -11,3 +11,17 @@ export {
   GoogleConfig,
   GenkitEngine
 } from './genkit.types';
+
+export {
+  GraphFilters,
+  GraphData,
+  GraphEdge,
+  NodeDetails,
+  GraphContext,
+  NeighborInfo,
+  VisualizationData,
+  VisualizationNode,
+  VisualizationEdge,
+  VisualizationOptions,
+  VisualizationService
+} from './visualization.types';

@@ -8,7 +8,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
 
 ## Tasks
 
-- [-] 1. Configurar estructura del proyecto y dependencias
+- [x] 1. Configurar estructura del proyecto y dependencias
   - Inicializar proyecto Node.js/TypeScript con configuración de tsconfig
   - Instalar dependencias: `@genkit-ai/core`, `@genkit-ai/googleai`, `neo4j-driver`, `pdf-parse`, `dotenv`, `fast-check`, `jest`
   - Crear estructura de directorios: `src/`, `src/config/`, `src/processors/`, `src/services/`, `src/models/`, `tests/`
@@ -17,19 +17,19 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
   - _Requirements: 3.1, 3.2, 3.3_
 
 - [ ] 2. Implementar Configuration Manager
-  - [-] 2.1 Crear interfaces y tipos de configuración
+  - [x] 2.1 Crear interfaces y tipos de configuración
     - Definir interfaces: `SystemConfig`, `Neo4jConfig`, `GoogleConfig`, `ValidationResult`
     - Implementar enums y tipos auxiliares
     - _Requirements: 3.1, 3.2, 3.3_
 
-  - [-] 2.2 Implementar carga y validación de configuración
+  - [x] 2.2 Implementar carga y validación de configuración
     - Implementar método `load()` usando dotenv
     - Implementar método `validate()` con verificación de campos requeridos
     - Implementar getters para cada sección de configuración
     - Manejar errores de archivo .env faltante o credenciales ausentes
     - _Requirements: 3.1, 3.2, 3.4, 3.5, 3.6_
 
-  - [-] 2.3 Implementar serialización de configuración
+  - [x] 2.3 Implementar serialización de configuración
     - Implementar método `serialize()` que convierte objeto a formato .env
     - Asegurar formato correcto de pares clave-valor
     - _Requirements: 10.3_
@@ -52,7 +52,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Test de validación con credenciales completas e incompletas
     - Test de logging de advertencias para credenciales opcionales
 
-- [~] 3. Checkpoint - Verificar configuración
+- [ ] 3. Checkpoint - Verificar configuración
   - Ensure all tests pass, ask the user if questions arise.
 
 
@@ -62,7 +62,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Definir enum `ProcessingStatus` y tipos auxiliares
     - _Requirements: 2.1, 2.2_
 
-  - [-] 4.2 Implementar inicialización y escaneo de carpeta
+  - [ ] 4.2 Implementar inicialización y escaneo de carpeta
     - Implementar método `initialize()` que verifica/crea carpeta de PDFs
     - Implementar método `scanFolder()` que identifica archivos .pdf
     - Crear subcarpetas `processed/` y `failed/` si no existen
@@ -74,7 +74,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Generar carpetas con mezcla de archivos .pdf y otros
     - Verificar que scanFolder() identifica exactamente todos los .pdf
 
-  - [-] 4.4 Implementar extracción de texto de PDFs
+  - [ ] 4.4 Implementar extracción de texto de PDFs
     - Implementar método `extractText()` usando pdf-parse
     - Preservar estructura de párrafos mediante análisis de saltos de línea
     - Manejar errores: PDFs protegidos, corruptos, ilegibles
@@ -93,7 +93,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Generar PDFs con múltiples párrafos
     - Verificar que el resultado mantiene separación de párrafos
 
-  - [~] 4.7 Implementar movimiento de archivos procesados
+  - [ ] 4.7 Implementar movimiento de archivos procesados
     - Implementar método `moveProcessedFile()` que mueve archivos según status
     - Mover exitosos a `processed/`, fallidos a `failed/`
     - _Requirements: 9.3, 9.4_
@@ -105,7 +105,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Verificar que archivos exitosos van a `processed/`
     - Verificar que archivos fallidos van a `failed/`
 
-  - [~] 4.9 Implementar procesamiento por lotes
+  - [ ] 4.9 Implementar procesamiento por lotes
     - Implementar método `processAll()` que procesa archivos secuencialmente
     - Mantener registro de progreso (procesados/total)
     - Generar `ProcessingReport` con estadísticas completas
@@ -117,7 +117,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Test de logging de operaciones
     - Test de procesamiento secuencial
 
-- [~] 5. Checkpoint - Verificar procesamiento de PDFs
+- [ ] 5. Checkpoint - Verificar procesamiento de PDFs
   - Ensure all tests pass, ask the user if questions arise.
 
 
@@ -127,13 +127,13 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Definir enum `EntityType` y tipos auxiliares
     - _Requirements: 4.2, 4.3_
 
-  - [-] 6.2 Implementar inicialización de Genkit
+  - [ ] 6.2 Implementar inicialización de Genkit
     - Implementar método `initialize()` con configuración de Google API
     - Configurar modelo de lenguaje (Gemini) y modelo de embeddings
     - Implementar manejo de errores de API key inválida
     - _Requirements: 4.1_
 
-  - [-] 6.3 Implementar análisis de texto para extracción de entidades
+  - [ ] 6.3 Implementar análisis de texto para extracción de entidades
     - Implementar método `analyzeText()` con prompts estructurados
     - Identificar entidades: personas, lugares, organizaciones, conceptos
     - Normalizar nombres de entidades (capitalización, espacios)
@@ -146,7 +146,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Generar textos con entidades reconocibles
     - Verificar que analyzeText() retorna al menos una entidad
 
-  - [~] 6.5 Implementar identificación de relaciones entre entidades
+  - [ ] 6.5 Implementar identificación de relaciones entre entidades
     - Extender `analyzeText()` para identificar relaciones
     - Normalizar tipos de relaciones (verbos)
     - Asignar confianza a cada relación
@@ -158,7 +158,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Generar textos con múltiples entidades relacionadas
     - Verificar que analyzeText() identifica al menos una relación
 
-  - [~] 6.7 Implementar generación de embeddings
+  - [ ] 6.7 Implementar generación de embeddings
     - Implementar método `generateEmbeddings()` usando modelo de Google
     - Implementar método `generateQueryEmbeddings()` para consultas
     - Manejar rate limiting y reintentos con backoff exponencial
@@ -182,7 +182,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Test de reintentos con backoff exponencial
     - Test de logging de errores de API
 
-- [~] 7. Checkpoint - Verificar análisis de IA
+- [ ] 7. Checkpoint - Verificar análisis de IA
   - Ensure all tests pass, ask the user if questions arise.
 
 
@@ -192,19 +192,19 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Definir tipos auxiliares para Neo4j
     - _Requirements: 5.1, 5.2, 5.3_
 
-  - [-] 8.2 Implementar conexión a Neo4j
+  - [ ] 8.2 Implementar conexión a Neo4j
     - Implementar método `connect()` usando neo4j-driver
     - Implementar método `disconnect()` para cerrar conexión
     - Manejar errores de conexión con reintentos y backoff exponencial
     - _Requirements: 5.1_
 
-  - [-] 8.3 Crear esquema e índices en Neo4j
+  - [ ] 8.3 Crear esquema e índices en Neo4j
     - Crear constraints para nodos Entity (id único)
     - Crear índice vectorial para embeddings con configuración cosine similarity
     - Implementar script de inicialización de esquema
     - _Requirements: 5.4_
 
-  - [~] 8.4 Implementar creación y actualización de nodos
+  - [ ] 8.4 Implementar creación y actualización de nodos
     - Implementar método `createOrUpdateEntity()` con lógica de merge
     - Crear nodo nuevo si no existe, actualizar si existe
     - Almacenar propiedades: id, name, type, sourceText, embeddings, documents
@@ -233,7 +233,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Procesar misma entidad dos veces
     - Verificar que solo existe un nodo y contiene ambos documentos
 
-  - [~] 8.9 Implementar creación de relaciones
+  - [ ] 8.9 Implementar creación de relaciones
     - Implementar método `createRelationship()` para crear aristas dirigidas
     - Almacenar propiedades: type, sourceDocument, confidence, createdAt
     - Usar transacciones para garantizar consistencia
@@ -245,7 +245,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Generar relaciones válidas entre entidades existentes
     - Verificar que se crea arista dirigida correcta en Neo4j
 
-  - [~] 8.11 Implementar procesamiento completo de análisis
+  - [ ] 8.11 Implementar procesamiento completo de análisis
     - Implementar método `processAnalysisResult()` que procesa entidades y relaciones
     - Ejecutar en transacción para atomicidad
     - Retornar `GraphStats` con contadores de operaciones
@@ -257,7 +257,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - **Validates: Requirements 8.2**
     - Verificar que se registra número exacto de entidades y relaciones creadas
 
-  - [~] 8.13 Implementar búsqueda vectorial
+  - [ ] 8.13 Implementar búsqueda vectorial
     - Implementar método `vectorSearch()` usando índice vectorial de Neo4j
     - Ejecutar consulta de similitud coseno
     - Ordenar resultados por puntuación descendente
@@ -274,7 +274,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - **Validates: Requirements 7.4**
     - Verificar que cada resultado incluye información de nodos vecinos
 
-  - [~] 8.16 Implementar obtención de contexto de nodo
+  - [ ] 8.16 Implementar obtención de contexto de nodo
     - Implementar método `getNodeContext()` que obtiene vecinos a profundidad N
     - Retornar nodos conectados con tipo y dirección de relación
     - _Requirements: 7.4_
@@ -285,7 +285,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Test de reintentos con backoff exponencial
     - Test de logging de operaciones
 
-- [~] 9. Checkpoint - Verificar construcción del grafo
+- [ ] 9. Checkpoint - Verificar construcción del grafo
   - Ensure all tests pass, ask the user if questions arise.
 
 
@@ -295,7 +295,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Definir tipos para filtros y opciones de visualización
     - _Requirements: 6.1, 6.2_
 
-  - [-] 10.2 Implementar consulta de grafo completo
+  - [ ] 10.2 Implementar consulta de grafo completo
     - Implementar método `getGraph()` que consulta Neo4j
     - Soportar filtros opcionales: tipos de entidad, documentos fuente, límite de nodos
     - Retornar nodos y aristas en formato `GraphData`
@@ -312,12 +312,12 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Generar filtros válidos aleatorios
     - Verificar que resultados son subconjunto del grafo completo
 
-  - [~] 10.5 Implementar consultas filtradas
+  - [ ] 10.5 Implementar consultas filtradas
     - Implementar método `getNodesByType()` para filtrar por tipo de entidad
     - Implementar método `getNodesByDocument()` para filtrar por documento
     - _Requirements: 6.3, 6.4_
 
-  - [~] 10.6 Implementar obtención de detalles de nodo
+  - [ ] 10.6 Implementar obtención de detalles de nodo
     - Implementar método `getNodeDetails()` que retorna propiedades completas
     - Incluir texto fuente, documentos, y contexto (vecinos)
     - _Requirements: 6.5_
@@ -327,14 +327,14 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - **Validates: Requirements 6.5**
     - Verificar que se pueden obtener propiedades y texto fuente de cualquier nodo
 
-  - [~] 10.8 Implementar generación de datos de visualización
+  - [ ] 10.8 Implementar generación de datos de visualización
     - Implementar método `generateVisualizationData()` que transforma a formato de biblioteca
     - Asignar colores por tipo de entidad
     - Calcular tamaño de nodos basado en número de conexiones
     - Formatear aristas con etiquetas y colores
     - _Requirements: 6.2, 6.6_
 
-  - [~] 10.9 Implementar resaltado de resultados de búsqueda
+  - [ ] 10.9 Implementar resaltado de resultados de búsqueda
     - Agregar propiedad de resaltado a nodos encontrados en búsqueda
     - Modificar `generateVisualizationData()` para marcar nodos resaltados
     - _Requirements: 7.5_
@@ -350,7 +350,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Test de generación de colores y tamaños
     - Test de formato de datos de visualización
 
-- [~] 11. Checkpoint - Verificar visualización
+- [ ] 11. Checkpoint - Verificar visualización
   - Ensure all tests pass, ask the user if questions arise.
 
 
@@ -361,7 +361,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Definir enum para niveles de log (ERROR, WARN, INFO, DEBUG)
     - _Requirements: 8.1, 8.2_
 
-  - [-] 12.2 Implementar Logger con niveles
+  - [ ] 12.2 Implementar Logger con niveles
     - Implementar métodos: `error()`, `warn()`, `info()`, `debug()`
     - Incluir timestamp, componente, mensaje, contexto en cada entrada
     - Incluir stack trace completo en errores críticos
@@ -383,7 +383,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - **Validates: Requirements 8.6**
     - Verificar que errores críticos incluyen stack trace completo
 
-  - [-] 12.3 Integrar Logger en todos los componentes
+  - [ ] 12.3 Integrar Logger en todos los componentes
     - Agregar instancia de Logger a cada componente
     - Registrar eventos importantes: inicio, fin, errores, advertencias
     - Registrar estadísticas de operaciones
@@ -403,14 +403,14 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Implementar `VisualizationError` con tipo de error
     - _Requirements: 8.3, 8.4_
 
-  - [-] 13.2 Implementar estrategia de reintentos
+  - [ ] 13.2 Implementar estrategia de reintentos
     - Implementar función `retryWithBackoff()` genérica
     - Configurar reintentos para Genkit Engine (rate limiting, timeouts)
     - Configurar reintentos para Knowledge Graph Builder (conexión, transacciones)
     - Usar backoff exponencial con límite máximo
     - _Requirements: 8.3_
 
-  - [~] 13.3 Integrar manejo de errores en componentes
+  - [ ] 13.3 Integrar manejo de errores en componentes
     - Agregar try-catch en métodos críticos
     - Clasificar errores como recuperables o no recuperables
     - Registrar errores con Logger
@@ -423,18 +423,18 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Test de propagación de errores críticos
     - Test de logging de errores
 
-- [~] 14. Checkpoint - Verificar logging y manejo de errores
+- [ ] 14. Checkpoint - Verificar logging y manejo de errores
   - Ensure all tests pass, ask the user if questions arise.
 
 
 - [ ] 15. Integrar componentes en aplicación principal
-  - [~] 15.1 Crear punto de entrada principal
+  - [ ] 15.1 Crear punto de entrada principal
     - Crear archivo `src/index.ts` como punto de entrada
     - Inicializar Configuration Manager y cargar configuración
     - Validar configuración antes de continuar
     - _Requirements: 3.1, 3.4_
 
-  - [~] 15.2 Inicializar servicios
+  - [ ] 15.2 Inicializar servicios
     - Inicializar Logger
     - Inicializar Genkit Engine con configuración de Google
     - Conectar Knowledge Graph Builder a Neo4j
@@ -442,7 +442,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Manejar errores de inicialización
     - _Requirements: 4.1, 5.1, 1.1_
 
-  - [~] 15.3 Implementar flujo de procesamiento completo
+  - [ ] 15.3 Implementar flujo de procesamiento completo
     - Escanear carpeta de PDFs
     - Para cada PDF: extraer texto → analizar con Genkit → construir grafo
     - Mover archivos procesados según resultado
@@ -460,7 +460,7 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - **Validates: Requirements 9.5**
     - Verificar que suma de procesados + pendientes = total
 
-  - [~] 15.6 Implementar interfaz de búsqueda vectorial
+  - [ ] 15.6 Implementar interfaz de búsqueda vectorial
     - Crear función que acepta consulta de texto
     - Generar embeddings de consulta con Genkit
     - Ejecutar búsqueda vectorial en Knowledge Graph Builder
@@ -473,13 +473,13 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Generar consultas válidas aleatorias
     - Verificar que embeddings tienen mismas dimensiones que documentos
 
-  - [~] 15.8 Implementar interfaz de visualización
+  - [ ] 15.8 Implementar interfaz de visualización
     - Crear función que obtiene grafo con filtros opcionales
     - Generar datos de visualización con Visualization Service
     - Soportar resaltado de resultados de búsqueda
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 7.5_
 
-  - [~] 15.9 Implementar cierre limpio de recursos
+  - [ ] 15.9 Implementar cierre limpio de recursos
     - Desconectar de Neo4j al finalizar
     - Cerrar archivos y liberar recursos
     - Registrar resumen final de operaciones
@@ -491,29 +491,29 @@ La implementación sigue un enfoque incremental donde cada tarea construye sobre
     - Test de búsqueda vectorial con resultados
     - Test de manejo de errores en flujo completo
 
-- [~] 16. Checkpoint final - Verificar integración completa
+- [ ] 16. Checkpoint final - Verificar integración completa
   - Ensure all tests pass, ask the user if questions arise.
 
 
 - [ ] 17. Crear documentación y ejemplos
-  - [~] 17.1 Crear README.md del proyecto
+  - [ ] 17.1 Crear README.md del proyecto
     - Documentar descripción general del sistema
     - Documentar requisitos previos (Node.js, Neo4j, Google API key)
     - Documentar pasos de instalación y configuración
     - Incluir ejemplo de archivo .env
     - Documentar comandos de ejecución
 
-  - [~] 17.2 Crear documentación de API
+  - [ ] 17.2 Crear documentación de API
     - Documentar interfaces públicas de cada componente
     - Incluir ejemplos de uso para cada método principal
     - Documentar tipos de error y cómo manejarlos
 
-  - [~] 17.3 Crear scripts de utilidad
+  - [ ] 17.3 Crear scripts de utilidad
     - Crear script de inicialización de esquema Neo4j
     - Crear script de limpieza de base de datos
     - Crear script de ejemplo con PDFs de prueba
 
-  - [~] 17.4 Crear guía de troubleshooting
+  - [ ] 17.4 Crear guía de troubleshooting
     - Documentar errores comunes y soluciones
     - Documentar cómo verificar conexión a Neo4j
     - Documentar cómo verificar configuración de Google API

@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function bindEvents() {
   document.getElementById('btn-refresh').addEventListener('click', loadGraph);
   document.getElementById('btn-process').addEventListener('click', processPDFs);
+  document.getElementById('btn-clear-db').addEventListener('click', clearDatabase);
   document.getElementById('btn-search').addEventListener('click', doSearch);
   document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
   document.getElementById('node-panel-close').addEventListener('click', closeNodePanel);
@@ -430,6 +431,56 @@ function buildDocList(docs) {
 }
 
 // ── Process PDFs ──
+async function clearDatabase() {
+  // Confirm with user
+  if (!confirm('⚠️ ¿Estás seguro de que quieres borrar TODA la base de datos?\n\nEsta acción eliminará:\n• Todos los nodos\n• Todas las relaciones\n• Todos los índices\n• Todos los constraints\n\nEsta acción NO se puede deshacer.')) {
+    return;
+  }
+
+  const btn = document.getElementById('btn-clear-db');
+  const originalHTML = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loading-dots">Borrando...</span>';
+  
+  showLoading('Limpiando base de datos...');
+  toast('Borrando toda la base de datos...', 'info');
+
+  try {
+    const res = await fetch(`${API}/api/database/clear`, { method: 'DELETE' });
+    const json = await res.json();
+    
+    if (!json.success) throw new Error(json.error);
+
+    const data = json.data;
+    toast(`Base de datos limpiada: ${data.deletedNodes} nodos, ${data.deletedRelationships} relaciones eliminadas`, 'success');
+    
+    // Clear the graph visualization
+    graphData = { nodes: [], edges: [] };
+    renderGraph();
+    
+    // Show empty state
+    document.getElementById('empty-state').classList.remove('hidden');
+    
+    // Reset stats
+    document.getElementById('stat-nodes').textContent = '0';
+    document.getElementById('stat-edges').textContent = '0';
+    document.getElementById('stat-docs').textContent = '0';
+    
+    // Clear filters and legend
+    document.getElementById('type-filters').innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Sin datos</span>';
+    document.getElementById('legend').innerHTML = '';
+    document.getElementById('doc-list').innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Sin documentos</span>';
+    
+    hideLoading();
+  } catch (err) {
+    hideLoading();
+    toast('Error limpiando la base de datos: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHTML;
+  }
+}
+
 async function processPDFs() {
   const btn = document.getElementById('btn-process');
   btn.disabled = true;

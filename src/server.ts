@@ -320,6 +320,85 @@ export async function createServerApp() {
     }
   });
 
+  /**
+   * DELETE /api/database/clear
+   * Clears the entire Neo4j database (all nodes, relationships, constraints, and indexes).
+   */
+  app.delete('/api/database/clear', async (req: Request, res: Response) => {
+    try {
+      logger.warn('API', 'Clearing entire database - this action cannot be undone');
+
+      const neo4jDriver = (visualizationService as any).driver;
+      if (!neo4jDriver) {
+        return res.status(500).json({ success: false, error: 'Neo4j not connected' });
+      }
+
+      const neo4jModule = await import('neo4j-driver');
+      const session = neo4jDriver.session({ defaultAccessMode: neo4jModule.default.session.WRITE });
+
+      try {
+        // Delete all relationships
+        const relResult = await session.run('MATCH ()-[r]->() DELETE r RETURN count(r) as count');
+        const deletedRels = relResult.records[0].get('count').toNumber();
+
+        // Delete all nodes
+        const nodeResult = await session.run('MATCH (n) DELETE n RETURN count(n) as count');
+        const deletedNodes = nodeResult.records[0].get('count').toNumber();
+
+        // Drop all constraints
+        const constraints = await session.run('SHOW CONSTRAINTS');
+        const deletedConstraints: string[] = [];
+        for (const record of constraints.records) {
+          const constraintName = record.get('name');
+          try {
+            await session.run(`DROP CONSTRAINT ${constraintName} IF EXISTS`);
+            deletedConstraints.push(constraintName);
+          } catch (error) {
+            logger.warn('API', `Could not drop constraint: ${constraintName}`);
+          }
+        }
+
+        // Drop all indexes (except built-in LOOKUP indexes)
+        const indexes = await session.run('SHOW INDEXES');
+        const deletedIndexes: string[] = [];
+        for (const record of indexes.records) {
+          const indexName = record.get('name');
+          const indexType = record.get('type');
+          
+          if (indexType === 'LOOKUP') {
+            continue; // Skip built-in indexes
+          }
+
+          try {
+            await session.run(`DROP INDEX ${indexName} IF EXISTS`);
+            deletedIndexes.push(indexName);
+          } catch (error) {
+            logger.warn('API', `Could not drop index: ${indexName}`);
+          }
+        }
+
+        logger.info('API', `Database cleared: ${deletedNodes} nodes, ${deletedRels} relationships, ${deletedConstraints.length} constraints, ${deletedIndexes.length} indexes`);
+
+        res.json({
+          success: true,
+          data: {
+            deletedNodes,
+            deletedRelationships: deletedRels,
+            deletedConstraints: deletedConstraints.length,
+            deletedIndexes: deletedIndexes.length,
+            constraintNames: deletedConstraints,
+            indexNames: deletedIndexes
+          }
+        });
+      } finally {
+        await session.close();
+      }
+    } catch (error: any) {
+      logger.error('API', 'Error clearing database', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // ─── Comparison Routes ────────────────────────────────────
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
   const comparisonService = new ComparisonService(config.google.apiKey);

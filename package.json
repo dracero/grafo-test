@@ -11,7 +11,9 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:pbt": "jest --testNamePattern=\"Property\"",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "db:clear": "ts-node scripts/clear-database.ts",
+    "db:init": "ts-node scripts/init-schema.ts"
   },
   "keywords": [
     "pdf",
