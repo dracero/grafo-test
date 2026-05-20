@@ -68,10 +68,6 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
         Limpiar BD
       </button>
-      <button id="btn-process" class="btn btn-primary" title="Procesar PDFs pendientes">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5 5.5 5.5 0 0 1 8 13.5zM10.5 8L7 5.5v5L10.5 8z"/></svg>
-        Procesar PDFs
-      </button>
       <button id="btn-refresh" class="btn btn-ghost" title="Recargar grafo">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.65 2.35A8 8 0 1 0 16 8h-2a6 6 0 1 1-1.76-4.24L10 6h6V0l-2.35 2.35z"/></svg>
       </button>
@@ -145,15 +141,15 @@
     <!-- Empty State -->
     <div id="empty-state" class="empty-state hidden">
       <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
-        <circle cx="40" cy="40" r="35" stroke="#4B5563" stroke-width="2" stroke-dasharray="6 4"/>
-        <circle cx="25" cy="30" r="6" fill="#8B5CF620" stroke="#8B5CF6" stroke-width="1.5"/>
-        <circle cx="55" cy="25" r="6" fill="#06B6D420" stroke="#06B6D4" stroke-width="1.5"/>
-        <circle cx="45" cy="52" r="6" fill="#F59E0B20" stroke="#F59E0B" stroke-width="1.5"/>
-        <line x1="25" y1="30" x2="55" y2="25" stroke="#6B728050" stroke-width="1" stroke-dasharray="3 3"/>
-        <line x1="55" y1="25" x2="45" y2="52" stroke="#6B728050" stroke-width="1" stroke-dasharray="3 3"/>
+          <circle cx="40" cy="40" r="35" stroke="#4B5563" stroke-width="2" stroke-dasharray="6 4"/>
+          <circle cx="25" cy="30" r="6" fill="#8B5CF620" stroke="#8B5CF6" stroke-width="1.5"/>
+          <circle cx="55" cy="25" r="6" fill="#06B6D420" stroke="#06B6D4" stroke-width="1.5"/>
+          <circle cx="45" cy="52" r="6" fill="#F59E0B20" stroke="#F59E0B" stroke-width="1.5"/>
+          <line x1="25" y1="30" x2="55" y2="25" stroke="#6B728050" stroke-width="1" stroke-dasharray="3 3"/>
+          <line x1="55" y1="25" x2="45" y2="52" stroke="#6B728050" stroke-width="1" stroke-dasharray="3 3"/>
       </svg>
       <h3>No hay datos en el grafo</h3>
-      <p>Coloca archivos PDF en la carpeta <code>./pdfs</code> y presiona <strong>"Procesar PDFs"</strong> para construir el grafo de conocimiento.</p>
+      <p>Hacé clic en <strong>"Comparar"</strong> para subir y comparar tus documentos. Esto construirá el grafo de conocimiento automáticamente.</p>
     </div>
   </main>
 

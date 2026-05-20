@@ -27,7 +27,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function bindEvents() {
   document.getElementById('btn-refresh').addEventListener('click', loadGraph);
-  document.getElementById('btn-process').addEventListener('click', processPDFs);
   document.getElementById('btn-clear-db').addEventListener('click', clearDatabase);
   document.getElementById('btn-search').addEventListener('click', doSearch);
   document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
@@ -452,7 +451,9 @@ async function clearDatabase() {
     if (!json.success) throw new Error(json.error);
 
     const data = json.data;
-    toast(`Base de datos limpiada: ${data.deletedNodes} nodos, ${data.deletedRelationships} relaciones eliminadas`, 'success');
+    const constraintInfo = data.deletedConstraints > 0 ? `, ${data.deletedConstraints} constraints` : '';
+    const indexInfo = data.deletedIndexes > 0 ? `, ${data.deletedIndexes} índices` : '';
+    toast(`Base de datos limpiada: ${data.deletedNodes} nodos, ${data.deletedRelationships} relaciones${constraintInfo}${indexInfo} eliminados`, 'success');
     
     // Clear the graph visualization
     graphData = { nodes: [], edges: [] };
@@ -471,6 +472,24 @@ async function clearDatabase() {
     document.getElementById('legend').innerHTML = '';
     document.getElementById('doc-list').innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Sin documentos</span>';
     
+    // Clear search
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) searchInput.value = '';
+    const searchResults = document.getElementById('search-results');
+    if (searchResults) searchResults.innerHTML = '';
+    
+    // Hide node details panel
+    closeNodePanel();
+    
+    // Reset filters
+    activeFilters = new Set();
+    const filterConcordant = document.getElementById('filter-concordant');
+    if (filterConcordant) filterConcordant.checked = false;
+    showOnlyConcordant = false;
+
+    // Reset zoom
+    zoomReset();
+    
     hideLoading();
   } catch (err) {
     hideLoading();
@@ -478,28 +497,6 @@ async function clearDatabase() {
   } finally {
     btn.disabled = false;
     btn.innerHTML = originalHTML;
-  }
-}
-
-async function processPDFs() {
-  const btn = document.getElementById('btn-process');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="loading-dots">Procesando...</span>';
-  toast('Procesando PDFs... esto puede tardar un momento', 'info');
-
-  try {
-    const res = await fetch(`${API}/api/process`, { method: 'POST' });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error);
-
-    const data = json.data;
-    toast(`Procesados ${data.processed} archivos`, 'success');
-    await loadGraph();
-  } catch (err) {
-    toast('Error procesando PDFs: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5 5.5 5.5 0 0 1 8 13.5zM10.5 8L7 5.5v5L10.5 8z"/></svg> Procesar PDFs';
   }
 }
 

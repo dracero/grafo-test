@@ -333,30 +333,31 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   async saveComparisonReport(report: ComparisonReport): Promise<void> {
     this.ensureConnected();
     this.logger.info('KnowledgeGraph', `Saving comparison report for ${report.programDocument} against ${report.normativeDocument}`);
+    this.logger.info('KnowledgeGraph', `Report contains ${report.ontology.length} ontology items and ${report.results.length} results`);
 
     return this.executeWrite(async (session) => {
+      // Step 1: Create normative document node
+      this.logger.info('KnowledgeGraph', 'Step 1: Creating normative document node');
       await session.run(`
         MERGE (d:Entity {name: $name})
         ON CREATE SET d.createdAt = datetime(), d.type = 'DOCUMENT'
-        SET d:Document:NormativeDocument
+        SET d:Document:NormativeDocument, d.updatedAt = datetime()
       `, { name: report.normativeDocument });
 
+      // Step 2: Create program document node and link to normative
+      this.logger.info('KnowledgeGraph', 'Step 2: Creating program document node');
       await session.run(`
         MERGE (d:Entity {name: $name})
         ON CREATE SET
           d.createdAt = datetime(),
-          d.type = 'DOCUMENT',
+          d.type = 'DOCUMENT'
+        SET
           d.total = $total,
           d.covered = $covered,
           d.partial = $partial,
           d.missing = $missing,
-          d.coveragePercent = $coveragePercent
-        ON MATCH SET
-          d.total = $total,
-          d.covered = $covered,
-          d.partial = $partial,
-          d.missing = $missing,
-          d.coveragePercent = $coveragePercent
+          d.coveragePercent = $coveragePercent,
+          d.updatedAt = datetime()
         SET d:Document:ProgramDocument
         WITH d
         MATCH (n:Entity {name: $normativeDocument})
@@ -372,62 +373,89 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         normativeDocument: report.normativeDocument
       });
 
-      for (const item of report.ontology) {
-        const uniqueName = `${report.normativeDocument}_${item.id}`;
-        await session.run(`
-          MATCH (d:Entity {name: $docName})
-          WHERE d:NormativeDocument
-          MERGE (o:Entity {name: $uniqueName})
-          ON CREATE SET
-            o.id = $itemId,
-            o.requirement = $requirement,
-            o.category = $category,
-            o.description = $description,
-            o.keywords = $keywords,
-            o.type = 'CONCEPT',
-            o.sourceText = $description,
-            o.createdAt = datetime()
-          ON MATCH SET
-            o.requirement = $requirement,
-            o.category = $category,
-            o.description = $description,
-            o.keywords = $keywords,
-            o.sourceText = $description
-          SET o:OntologyItem
-          MERGE (o)-[:EXTRACTED_FROM]->(d)
-        `, {
-          docName: report.normativeDocument,
-          uniqueName,
-          itemId: item.id,
-          requirement: item.requirement,
-          category: item.category,
-          description: item.description,
-          keywords: item.keywords || []
-        });
+      // Step 3: Create ontology items in batches
+      this.logger.info('KnowledgeGraph', `Step 3: Creating ${report.ontology.length} ontology items`);
+      const batchSize = 100;
+      for (let i = 0; i < report.ontology.length; i += batchSize) {
+        const batch = report.ontology.slice(i, i + batchSize);
+        this.logger.info('KnowledgeGraph', `Processing ontology batch ${i / batchSize + 1} (${batch.length} items)`);
+        
+        for (const item of batch) {
+          const uniqueName = `${report.normativeDocument}_${item.id}`;
+          try {
+            await session.run(`
+              MATCH (d:Entity {name: $docName})
+              WHERE d:NormativeDocument
+              MERGE (o:Entity {name: $uniqueName})
+              ON CREATE SET
+                o.id = $itemId,
+                o.requirement = $requirement,
+                o.category = $category,
+                o.description = $description,
+                o.keywords = $keywords,
+                o.type = 'CONCEPT',
+                o.sourceText = $description,
+                o.createdAt = datetime()
+              ON MATCH SET
+                o.requirement = $requirement,
+                o.category = $category,
+                o.description = $description,
+                o.keywords = $keywords,
+                o.sourceText = $description
+              SET o:OntologyItem
+              MERGE (o)-[:EXTRACTED_FROM]->(d)
+            `, {
+              docName: report.normativeDocument,
+              uniqueName,
+              itemId: item.id,
+              requirement: item.requirement,
+              category: item.category,
+              description: item.description,
+              keywords: item.keywords || []
+            });
+          } catch (err: any) {
+            this.logger.error('KnowledgeGraph', `Failed to create ontology item ${item.id}`, err);
+            throw err;
+          }
+        }
       }
 
-      for (const res of report.results) {
-        const uniqueName = `${report.normativeDocument}_${res.item.id}`;
-        await session.run(`
-          MATCH (p:Entity {name: $progName})
-          WHERE p:ProgramDocument
-          MATCH (o:Entity {name: $uniqueName})
-          WHERE o:OntologyItem
-          MERGE (p)-[r:EVALUATED_AGAINST]->(o)
-          SET r.status = $status,
-          r.confidence = $confidence,
-          r.evidence = $evidence,
-          r.suggestion = $suggestion,
-          r.updatedAt = datetime()
-        `, {
-          progName: report.programDocument,
-          uniqueName,
-          status: res.status,
-          confidence: res.confidence,
-          evidence: res.evidence,
-          suggestion: res.suggestion
-        });
+      // Step 4: Create evaluation relationships in batches
+      this.logger.info('KnowledgeGraph', `Step 4: Creating ${report.results.length} evaluation relationships`);
+      for (let i = 0; i < report.results.length; i += batchSize) {
+        const batch = report.results.slice(i, i + batchSize);
+        this.logger.info('KnowledgeGraph', `Processing results batch ${i / batchSize + 1} (${batch.length} items)`);
+        
+        for (const res of batch) {
+          const uniqueName = `${report.normativeDocument}_${res.item.id}`;
+          try {
+            await session.run(`
+              MATCH (p:Entity {name: $progName})
+              WHERE p:ProgramDocument
+              MATCH (o:Entity {name: $uniqueName})
+              WHERE o:OntologyItem
+              MERGE (p)-[r:EVALUATED_AGAINST]->(o)
+              SET r.status = $status,
+              r.confidence = $confidence,
+              r.evidence = $evidence,
+              r.suggestion = $suggestion,
+              r.updatedAt = datetime()
+            `, {
+              progName: report.programDocument,
+              uniqueName,
+              status: res.status,
+              confidence: res.confidence,
+              evidence: res.evidence,
+              suggestion: res.suggestion
+            });
+          } catch (err: any) {
+            this.logger.error('KnowledgeGraph', `Failed to create evaluation for ${res.item.id}`, err);
+            throw err;
+          }
+        }
       }
+
+      this.logger.info('KnowledgeGraph', 'Successfully saved all comparison data to Neo4j');
     });
   }
 
@@ -455,7 +483,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     return this.executeRead(async (session) => {
       const query = `
         MATCH (p:ProgramDocument)-[:COMPARED_TO]->(n:NormativeDocument)
-        WITH p, n ORDER BY p.createdAt DESC LIMIT 1
+        WITH p, n ORDER BY COALESCE(p.updatedAt, p.createdAt) DESC LIMIT 1
         OPTIONAL MATCH (p)-[r:EVALUATED_AGAINST]->(o:OntologyItem)
         RETURN
           p.name AS programName,

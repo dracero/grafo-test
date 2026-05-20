@@ -337,57 +337,57 @@ export async function createServerApp() {
       const session = neo4jDriver.session({ defaultAccessMode: neo4jModule.default.session.WRITE });
 
       try {
-        // Delete all relationships
-        const relResult = await session.run('MATCH ()-[r]->() DELETE r RETURN count(r) as count');
-        const deletedRels = relResult.records[0].get('count').toNumber();
+        // Count relationships and nodes before deleting
+        const countResult = await session.run('MATCH (n) OPTIONAL MATCH (n)-[r]->() RETURN count(distinct n) as nodes, count(distinct r) as rels');
+        const deletedNodes = countResult.records[0].get('nodes').toNumber();
+        const deletedRels = countResult.records[0].get('rels').toNumber();
 
-        // Delete all nodes
-        const nodeResult = await session.run('MATCH (n) DELETE n RETURN count(n) as count');
-        const deletedNodes = nodeResult.records[0].get('count').toNumber();
+        // 1. Delete ALL nodes and relationships
+        await session.run('MATCH (n) DETACH DELETE n');
 
-        // Drop all constraints
-        const constraints = await session.run('SHOW CONSTRAINTS');
-        const deletedConstraints: string[] = [];
-        for (const record of constraints.records) {
-          const constraintName = record.get('name');
-          try {
-            await session.run(`DROP CONSTRAINT ${constraintName} IF EXISTS`);
-            deletedConstraints.push(constraintName);
-          } catch (error) {
-            logger.warn('API', `Could not drop constraint: ${constraintName}`);
+        // 2. Drop all user-defined constraints
+        let constraintNames: string[] = [];
+        let deletedConstraints = 0;
+        try {
+          const constraintsResult = await session.run('SHOW CONSTRAINTS YIELD name RETURN name');
+          constraintNames = constraintsResult.records.map((r: any) => r.get('name') as string);
+          for (const name of constraintNames) {
+            await session.run(`DROP CONSTRAINT \`${name}\` IF EXISTS`);
+            deletedConstraints++;
           }
+          logger.info('API', `Dropped ${deletedConstraints} constraints`);
+        } catch (constraintErr: any) {
+          logger.warn('API', `Could not drop constraints: ${constraintErr.message}`);
         }
 
-        // Drop all indexes (except built-in LOOKUP indexes)
-        const indexes = await session.run('SHOW INDEXES');
-        const deletedIndexes: string[] = [];
-        for (const record of indexes.records) {
-          const indexName = record.get('name');
-          const indexType = record.get('type');
-          
-          if (indexType === 'LOOKUP') {
-            continue; // Skip built-in indexes
+        // 3. Drop all user-defined indexes (skip lookup indexes which are system indexes)
+        let indexNames: string[] = [];
+        let deletedIndexes = 0;
+        try {
+          const indexesResult = await session.run(
+            `SHOW INDEXES YIELD name, type WHERE type <> 'LOOKUP' RETURN name`
+          );
+          indexNames = indexesResult.records.map((r: any) => r.get('name') as string);
+          for (const name of indexNames) {
+            await session.run(`DROP INDEX \`${name}\` IF EXISTS`);
+            deletedIndexes++;
           }
-
-          try {
-            await session.run(`DROP INDEX ${indexName} IF EXISTS`);
-            deletedIndexes.push(indexName);
-          } catch (error) {
-            logger.warn('API', `Could not drop index: ${indexName}`);
-          }
+          logger.info('API', `Dropped ${deletedIndexes} indexes`);
+        } catch (indexErr: any) {
+          logger.warn('API', `Could not drop indexes: ${indexErr.message}`);
         }
 
-        logger.info('API', `Database cleared: ${deletedNodes} nodes, ${deletedRels} relationships, ${deletedConstraints.length} constraints, ${deletedIndexes.length} indexes`);
+        logger.info('API', `Database fully cleared: ${deletedNodes} nodes, ${deletedRels} relationships, ${deletedConstraints} constraints, ${deletedIndexes} indexes`);
 
         res.json({
           success: true,
           data: {
             deletedNodes,
             deletedRelationships: deletedRels,
-            deletedConstraints: deletedConstraints.length,
-            deletedIndexes: deletedIndexes.length,
-            constraintNames: deletedConstraints,
-            indexNames: deletedIndexes
+            deletedConstraints,
+            deletedIndexes,
+            constraintNames,
+            indexNames
           }
         });
       } finally {
@@ -443,6 +443,9 @@ export async function createServerApp() {
       const clearPrevious = req.body.clearPrevious === 'true';
       const report = await comparisonService.fullComparison(normPdf.text, progPdf.text, normFile.originalname, progFile.originalname);
       
+      logger.info('API', `Comparison report generated: ${report.results.length} results, ${report.ontology.length} ontology items`);
+      
+      // Always attempt to persist — errors are logged but do NOT block the response
       try {
         if (clearPrevious) {
           await graphBuilder.clearPreviousComparisons();
@@ -450,11 +453,13 @@ export async function createServerApp() {
         }
 
         // Save the generated ontology and comparison results into Neo4j
+        logger.info('API', 'Starting to save comparison report to Neo4j...');
         await graphBuilder.saveComparisonReport(report);
         logger.info('API', 'Successfully saved comparison report to Neo4j');
       } catch (err: any) {
-        logger.error('API', 'Failed to save comparison to graph', err);
-        // We still return success but maybe add a warning to the response if desired.
+        // Log the persistence failure but still return the report to the user.
+        // The comparison itself succeeded; persistence is best-effort.
+        logger.error('API', 'Failed to save comparison to graph (non-fatal)', err);
       }
 
       res.json({ success: true, data: report });

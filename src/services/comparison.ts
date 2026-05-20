@@ -324,11 +324,17 @@ ${safeText}`;
 
 Evalúa el CUMPLIMIENTO NORMATIVO de un programa frente a ${normativeOntology.length} requisitos normativos.
 
-Para CADA requisito normativo (hay exactamente ${normativeOntology.length}), determina:
-- itemId: ID del requisito normativo
+IMPORTANTE - AGRUPACIÓN DE NIVELES:
+- Si varios requisitos consecutivos pertenecen a la MISMA competencia pero diferentes niveles (ej: REQ-028 a REQ-032 todos sobre "Bienestar digital"), AGRÚPALOS en UNA SOLA evaluación.
+- Usa el ID del primer requisito del grupo (ej: REQ-028).
+- En la evidencia y sugerencia, menciona que aplica a TODOS los niveles de esa competencia.
+- Esto evita repeticiones innecesarias.
+
+Para CADA requisito o GRUPO de requisitos de la misma competencia, determina:
+- itemId: ID del requisito normativo (o del primero del grupo)
 - status: "covered" (cubierto completamente) | "partial" (cubierto parcialmente) | "missing" (ausente)
 - confidence: número entre 0.0 y 1.0
-- evidence: qué elementos del programa lo cubren o qué falta
+- evidence: qué elementos del programa lo cubren o qué falta (menciona si aplica a múltiples niveles)
 - suggestion: sugerencia concreta para mejorar (o "Ninguna" si está cubierto)
 
 Usa razonamiento semántico: un requisito puede estar cubierto aunque se exprese con palabras diferentes.
@@ -370,18 +376,79 @@ ${programList}`;
 
     logger.info('Comparison', `✅ Comparación completada: ${rawResults.length} evaluaciones recibidas de ${normativeOntology.length} esperadas`);
 
-    return rawResults
-      .filter((r: any) => r.itemId && r.status)
-      .map((r: any) => {
-        const item = normativeOntology.find((i) => i.id === r.itemId) || normativeOntology[0];
-        return {
-          item,
+    // Expandir resultados agrupados a todos los requisitos individuales
+    const expandedResults: ComparisonResult[] = [];
+    const processedIds = new Set<string>();
+
+    for (const r of rawResults) {
+      if (!r.itemId || !r.status) continue;
+
+      const baseItem = normativeOntology.find((i) => i.id === r.itemId);
+      if (!baseItem) continue;
+
+      // Detectar si este resultado aplica a múltiples niveles de la misma competencia
+      // Patrón: REQ-028, REQ-029, REQ-030, etc. con la misma competencia base
+      const baseIdMatch = baseItem.id.match(/^(REQ-\d+)/);
+      if (baseIdMatch) {
+        const baseIdNum = parseInt(baseIdMatch[1].replace('REQ-', ''), 10);
+        
+        // Buscar requisitos consecutivos con la misma competencia base
+        const relatedItems = normativeOntology.filter(item => {
+          const itemIdNum = parseInt(item.id.replace('REQ-', ''), 10);
+          // Considerar relacionados si están en un rango de 5 IDs (típicamente 5 niveles)
+          return itemIdNum >= baseIdNum && 
+                 itemIdNum < baseIdNum + 5 &&
+                 item.category === baseItem.category &&
+                 item.requirement.split(':')[0] === baseItem.requirement.split(':')[0];
+        });
+
+        // Si encontramos múltiples niveles, aplicar el mismo resultado a todos
+        if (relatedItems.length > 1) {
+          for (const item of relatedItems) {
+            if (!processedIds.has(item.id)) {
+              expandedResults.push({
+                item,
+                status: r.status as 'covered' | 'partial' | 'missing',
+                confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
+                evidence: String(r.evidence ?? ''),
+                suggestion: String(r.suggestion ?? ''),
+              });
+              processedIds.add(item.id);
+            }
+          }
+          continue;
+        }
+      }
+
+      // Si no es un grupo, agregar el resultado individual
+      if (!processedIds.has(baseItem.id)) {
+        expandedResults.push({
+          item: baseItem,
           status: r.status as 'covered' | 'partial' | 'missing',
           confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
           evidence: String(r.evidence ?? ''),
           suggestion: String(r.suggestion ?? ''),
-        };
-      });
+        });
+        processedIds.add(baseItem.id);
+      }
+    }
+
+    // Agregar requisitos no procesados como "missing" con baja confianza
+    for (const item of normativeOntology) {
+      if (!processedIds.has(item.id)) {
+        expandedResults.push({
+          item,
+          status: 'missing',
+          confidence: 0.3,
+          evidence: 'No se encontró evaluación para este requisito en la comparación.',
+          suggestion: 'Revisar manualmente si este requisito está cubierto en el programa.',
+        });
+      }
+    }
+
+    logger.info('Comparison', `📋 Resultados expandidos: ${expandedResults.length} evaluaciones finales`);
+
+    return expandedResults;
   }
 
   async fullComparison(
