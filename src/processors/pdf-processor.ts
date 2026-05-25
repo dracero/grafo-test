@@ -61,21 +61,26 @@ export class PDFProcessorImpl implements PDFProcessor {
    * Validates Requirements 1.4, 1.5
    */
   async scanFolder(): Promise<string[]> {
-    const files = await fs.readdir(this.pdfFolderPath);
-    const pdfFiles = files
-      .filter(file => file.toLowerCase().endsWith('.pdf'))
-      .map(file => path.join(this.pdfFolderPath, file));
-    
-    // Filter out files that are actually in subfolders
-    const mainFolderPdfs: string[] = [];
-    for (const filePath of pdfFiles) {
-      const stats = await fs.stat(filePath);
-      if (stats.isFile()) {
-        mainFolderPdfs.push(filePath);
+    try {
+      const files = await fs.readdir(this.pdfFolderPath);
+      const pdfFiles = files
+        .filter(file => file.toLowerCase().endsWith('.pdf'))
+        .map(file => path.join(this.pdfFolderPath, file));
+      
+      // Filter out files that are actually in subfolders
+      const mainFolderPdfs: string[] = [];
+      for (const filePath of pdfFiles) {
+        const stats = await fs.stat(filePath);
+        if (stats.isFile()) {
+          mainFolderPdfs.push(filePath);
+        }
       }
+      
+      return mainFolderPdfs;
+    } catch (error) {
+      // Return empty array if folder does not exist or cannot be accessed
+      return [];
     }
-    
-    return mainFolderPdfs;
   }
 
   /**
