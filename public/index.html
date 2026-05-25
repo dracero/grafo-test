@@ -60,13 +60,13 @@
       </div>
     </div>
     <div class="top-bar-right">
-      <a href="/compare.html" class="btn btn-ghost" style="text-decoration:none" title="Comparar normativa vs programa">
+      <a href="/compare.html" class="btn btn-primary" style="text-decoration:none" title="Comparar normativa vs programa">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5v-3zm8 0A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5v-3zm-8 8A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5v-3z"/></svg>
         Comparar
       </a>
-      <button id="btn-process" class="btn btn-primary" title="Procesar PDFs pendientes">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5 5.5 5.5 0 0 1 8 13.5zM10.5 8L7 5.5v5L10.5 8z"/></svg>
-        Procesar PDFs
+      <button id="btn-clear-db" class="btn btn-danger" title="Borrar toda la base de datos">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
+        Borrar BD
       </button>
       <button id="btn-refresh" class="btn btn-ghost" title="Recargar grafo">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.65 2.35A8 8 0 1 0 16 8h-2a6 6 0 1 1-1.76-4.24L10 6h6V0l-2.35 2.35z"/></svg>
@@ -149,7 +149,7 @@
         <line x1="55" y1="25" x2="45" y2="52" stroke="#6B728050" stroke-width="1" stroke-dasharray="3 3"/>
       </svg>
       <h3>No hay datos en el grafo</h3>
-      <p>Coloca archivos PDF en la carpeta <code>./pdfs</code> y presiona <strong>"Procesar PDFs"</strong> para construir el grafo de conocimiento.</p>
+      <p>Hacé clic en <strong>"Comparar"</strong> arriba a la derecha para subir la normativa y el programa de materia, y construir el grafo de conocimiento.</p>
     </div>
   </main>
 

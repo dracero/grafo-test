@@ -488,6 +488,31 @@
 
       <!-- Results -->
       <div class="results-section" id="results-section">
+        <!-- Document Names Badge Section & Fix Button -->
+        <div class="doc-names-container" id="doc-names-container" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; background: var(--bg-secondary); padding: 16px 20px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+          <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <div class="doc-badge" style="background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.2); padding: 8px 14px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.1rem;">📋</span>
+              <div>
+                <div style="font-size: 0.65rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.04em;">Documento Normativo</div>
+                <div id="display-normative-name" style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">—</div>
+              </div>
+            </div>
+            <div class="doc-badge" style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.2); padding: 8px 14px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.1rem;">📚</span>
+              <div>
+                <div style="font-size: 0.65rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.04em;">Programa de Materia</div>
+                <div id="display-program-name" style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">—</div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <button id="btn-fix" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-emerald), #059669); box-shadow: 0 0 18px rgba(16, 185, 129, 0.25); display: none; padding: 10px 24px; font-size: 0.88rem; font-weight: 700; height: auto;">
+              🔧 Arreglar Programa
+            </button>
+          </div>
+        </div>
+
         <!-- Summary -->
         <div class="summary-grid" id="summary-grid"></div>
 
@@ -506,6 +531,8 @@
     // ── State ──
     let normativeFile = null;
     let programFile = null;
+    let latestNormativeDocName = '';
+    let latestProgramDocName = '';
 
     // Load previous comparison on page load
     document.addEventListener('DOMContentLoaded', async () => {
@@ -586,6 +613,16 @@
     function renderResults(report) {
       const s = report.summary;
 
+      // Set document names
+      document.getElementById('display-normative-name').textContent = report.normativeDocument || '—';
+      document.getElementById('display-program-name').textContent = report.programDocument || '—';
+      latestNormativeDocName = report.normativeDocument || '';
+      latestProgramDocName = report.programDocument || '';
+
+      // Show fix button if there are partial or missing requirements
+      const hasGaps = s.partial > 0 || s.missing > 0;
+      document.getElementById('btn-fix').style.display = hasGaps ? 'block' : 'none';
+
       // Summary cards
       document.getElementById('summary-grid').innerHTML = `
         <div class="summary-card"><div class="value value-total">${s.total}</div><div class="label">Total Requisitos</div></div>
@@ -662,6 +699,133 @@
       `;
     }
 
+    // ── Fix button event ──
+    document.getElementById('btn-fix').addEventListener('click', runFixPipeline);
+    document.getElementById('btn-close-modal').addEventListener('click', () => {
+      document.getElementById('fix-modal').style.display = 'none';
+    });
+
+    async function runFixPipeline() {
+      if (!latestNormativeDocName || !latestProgramDocName) {
+        toast('No hay documentos comparados para arreglar.', 'error');
+        return;
+      }
+
+      const modal = document.getElementById('fix-modal');
+      modal.style.display = 'flex';
+
+      // Reset steps visual status
+      const steps = ['start', 'normative', 'program', 'compliance', 'fixer', 'pdf'];
+      steps.forEach(s => {
+        const el = document.getElementById('step-' + s);
+        if (el) {
+          el.style.color = 'var(--text-muted)';
+          el.querySelector('.step-status').textContent = '⏳';
+        }
+      });
+
+      document.getElementById('btn-close-modal').disabled = true;
+      document.getElementById('btn-download-pdf').style.display = 'none';
+
+      try {
+        const res = await fetch('/api/fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            normativeDocument: latestNormativeDocName,
+            programDocument: latestProgramDocName
+          })
+        });
+
+        if (!res.ok) throw new Error('Error al iniciar el pipeline de corrección.');
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        updateStep('start', 'active');
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // keep partial line in buffer
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const data = JSON.parse(line);
+              if (data.type === 'progress') {
+                handleProgressUpdate(data);
+              } else if (data.type === 'complete') {
+                updateStep('pdf', 'success');
+                const dlBtn = document.getElementById('btn-download-pdf');
+                dlBtn.href = data.downloadUrl;
+                dlBtn.style.display = 'inline-flex';
+                toast('Corrección finalizada con éxito', 'success');
+              } else if (data.type === 'error') {
+                throw new Error(data.error);
+              }
+            } catch (e) {
+              console.error('Error parsing streaming line:', e, line);
+            }
+          }
+        }
+      } catch (err) {
+        toast('Error de corrección: ' + err.message, 'error');
+        // Mark active steps as failed
+        steps.forEach(s => {
+          const el = document.getElementById('step-' + s);
+          if (el && el.querySelector('.step-status').textContent === '⚡') {
+            el.querySelector('.step-status').textContent = '❌';
+            el.style.color = 'var(--accent-rose)';
+          }
+        });
+      } finally {
+        document.getElementById('btn-close-modal').disabled = false;
+      }
+    }
+
+    function updateStep(stepId, state) {
+      const el = document.getElementById('step-' + stepId);
+      if (!el) return;
+      if (state === 'active') {
+        el.style.color = 'var(--accent-cyan)';
+        el.querySelector('.step-status').textContent = '⚡';
+      } else if (state === 'success') {
+        el.style.color = 'var(--accent-emerald)';
+        el.querySelector('.step-status').textContent = '✅';
+      }
+    }
+
+    function handleProgressUpdate(update) {
+      if (update.step === 'NormativeOntologyAgent') {
+        updateStep('start', 'success');
+        updateStep('normative', 'active');
+        if (update.isFinal) updateStep('normative', 'success');
+      } else if (update.step === 'ProgramOntologyAgent') {
+        updateStep('normative', 'success');
+        updateStep('program', 'active');
+        if (update.isFinal) updateStep('program', 'success');
+      } else if (update.step === 'ComplianceGapsAgent') {
+        updateStep('program', 'success');
+        updateStep('compliance', 'active');
+        if (update.isFinal) updateStep('compliance', 'success');
+      } else if (update.step === 'ProgramFixerAgent') {
+        updateStep('compliance', 'success');
+        updateStep('fixer', 'active');
+        if (update.isFinal) {
+          updateStep('fixer', 'success');
+          updateStep('pdf', 'active');
+        }
+      } else if (update.step === 'PDFGenerator') {
+        updateStep('fixer', 'success');
+        updateStep('pdf', 'active');
+      }
+    }
+
     // ── Utils ──
     function esc(str) { const d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
 
@@ -674,5 +838,49 @@
       setTimeout(() => { el.classList.add('toast-exit'); setTimeout(() => el.remove(), 200); }, 4000);
     }
   </script>
+
+  <!-- Modal de Progreso de Corrección -->
+  <div id="fix-modal" class="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="modal-content" style="background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); max-width: 600px; width: 90%; padding: 32px; box-shadow: var(--shadow-lg);">
+      <h2 style="font-size: 1.4rem; font-weight: 800; background: linear-gradient(135deg, var(--accent-emerald), var(--accent-cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 16px; margin-top: 0;">Corrección de Programa con Multi-Agente</h2>
+      <p style="color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 24px; line-height: 1.5;">El sistema multi-agente está procesando el programa de la materia utilizando Groq para corregir los puntos faltantes o parciales de acuerdo a la normativa.</p>
+      
+      <!-- Progress steps -->
+      <div id="fix-steps" style="display: flex; flex-direction: column; gap: 14px; margin-bottom: 28px;">
+        <div class="fix-step" id="step-start" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
+          <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
+          <span>Iniciando sistema de agentes ADK...</span>
+        </div>
+        <div class="fix-step" id="step-normative" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
+          <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
+          <span>Agente Normativo: Leyendo requisitos en Neo4j...</span>
+        </div>
+        <div class="fix-step" id="step-program" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
+          <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
+          <span>Agente del Programa: Leyendo estructura en Neo4j...</span>
+        </div>
+        <div class="fix-step" id="step-compliance" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
+          <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
+          <span>Agente de Cumplimiento: Analizando brechas (gaps)...</span>
+        </div>
+        <div class="fix-step" id="step-fixer" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
+          <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
+          <span>Agente Corrector: Modificando programa con Groq...</span>
+        </div>
+        <div class="fix-step" id="step-pdf" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
+          <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
+          <span>Generador: Creando PDF con formato normativo...</span>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div style="display: flex; justify-content: flex-end; gap: 12px;">
+        <button id="btn-close-modal" class="filter-tab" style="padding: 8px 18px; font-size: 0.85rem; height: auto;" disabled>Cerrar</button>
+        <a id="btn-download-pdf" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-cyan), #0891b2); box-shadow: 0 0 18px rgba(6, 182, 212, 0.25); text-decoration: none; display: none; padding: 10px 20px; font-size: 0.85rem; font-weight: 700; align-items: center; gap: 8px; height: auto;">
+          📥 Descargar PDF Corregido
+        </a>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

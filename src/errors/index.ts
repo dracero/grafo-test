@@ -75,14 +75,27 @@ export function isApplicationError(error: any): boolean {
  * @returns true if the error can be retried
  */
 export function isRecoverableError(error: any): boolean {
-  // Genkit UNAVAILABLE (503) — temporary server overload, always retry
-  if (error?.status === 'UNAVAILABLE' || error?.code === 503) return true;
+  const errMsg = String(error?.message || error || '').toLowerCase();
 
-  // Genkit RESOURCE_EXHAUSTED (429) — rate limit
-  if (error?.status === 'RESOURCE_EXHAUSTED' || error?.code === 429) return true;
+  // Temporary server overload, always retry
+  if (error?.status === 'UNAVAILABLE' || error?.code === 503 || errMsg.includes('503') || errMsg.includes('unavailable')) {
+    return true;
+  }
+
+  // Rate limit / resource exhausted
+  if (
+    error?.status === 'RESOURCE_EXHAUSTED' || 
+    error?.code === 429 || 
+    errMsg.includes('429') || 
+    errMsg.includes('resource_exhausted') || 
+    errMsg.includes('resource exhausted') || 
+    errMsg.includes('quota') || 
+    errMsg.includes('rate limit')
+  ) {
+    return true;
+  }
 
   // Genkit schema-parse error caused by truncated JSON output — retry with same params
-  // (the model may produce a complete response on a fresh attempt)
   if (
     error?.name === 'GenkitError' &&
     typeof error?.message === 'string' &&

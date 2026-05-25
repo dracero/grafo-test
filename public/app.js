@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function bindEvents() {
   document.getElementById('btn-refresh').addEventListener('click', loadGraph);
-  document.getElementById('btn-process').addEventListener('click', processPDFs);
+  document.getElementById('btn-clear-db').addEventListener('click', clearDatabase);
   document.getElementById('btn-search').addEventListener('click', doSearch);
   document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
   document.getElementById('node-panel-close').addEventListener('click', closeNodePanel);
@@ -429,26 +429,30 @@ function buildDocList(docs) {
   ).join('');
 }
 
-// ── Process PDFs ──
-async function processPDFs() {
-  const btn = document.getElementById('btn-process');
+
+// ── Clear Database ──
+async function clearDatabase() {
+  if (!confirm('¿Estás seguro de que quieres borrar toda la base de datos de Neo4j? Esta acción no se puede deshacer.')) {
+    return;
+  }
+
+  const btn = document.getElementById('btn-clear-db');
   btn.disabled = true;
-  btn.innerHTML = '<span class="loading-dots">Procesando...</span>';
-  toast('Procesando PDFs... esto puede tardar un momento', 'info');
+  btn.innerHTML = '<span class="loading-dots">Borrando...</span>';
+  toast('Borrando la base de datos...', 'info');
 
   try {
-    const res = await fetch(`${API}/api/process`, { method: 'POST' });
+    const res = await fetch(`${API}/api/graph/clear`, { method: 'POST' });
     const json = await res.json();
     if (!json.success) throw new Error(json.error);
 
-    const data = json.data;
-    toast(`Procesados ${data.processed} archivos`, 'success');
+    toast('Base de datos borrada con éxito', 'success');
     await loadGraph();
   } catch (err) {
-    toast('Error procesando PDFs: ' + err.message, 'error');
+    toast('Error borrando la base de datos: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5 5.5 5.5 0 0 1 8 13.5zM10.5 8L7 5.5v5L10.5 8z"/></svg> Procesar PDFs';
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg> Borrar BD';
   }
 }
 

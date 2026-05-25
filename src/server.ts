@@ -17,6 +17,8 @@ import { GenkitEngineImpl } from './services/genkit-engine';
 import { KnowledgeGraphBuilderImpl } from './services/knowledge-graph-builder';
 import { VisualizationServiceImpl } from './services/visualization';
 import { ComparisonService } from './services/comparison';
+import { runCorrectionPipeline } from './services/multi-agent-service';
+import { generateCorrectedProgramPDF } from './services/pdf-generator';
 import { EntityType } from './models/genkit.types';
 
 const logger = createLogger();
@@ -252,6 +254,21 @@ export async function createServerApp() {
   });
 
   /**
+   * POST /api/graph/clear
+   * Clears the entire Neo4j database (all nodes and relationships).
+   */
+  app.post('/api/graph/clear', async (req: Request, res: Response) => {
+    try {
+      logger.info('API', 'Clearing entire database...');
+      await graphBuilder.clearEntireDatabase();
+      res.json({ success: true, message: 'Base de datos borrada por completo.' });
+    } catch (error: any) {
+      logger.error('API', 'Error clearing database', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  /**
    * POST /api/search
    * Vector similarity search. Body: { query: string, limit?: number }
    */
@@ -383,6 +400,77 @@ export async function createServerApp() {
       logger.error('API', 'Error in comparison', error);
       res.status(500).json({ success: false, error: error.message });
     }
+  });
+
+  // In-memory cache for generated corrected PDFs
+  const correctedPdfs = new Map<string, Buffer>();
+
+  /**
+   * POST /api/fix
+   * Runs the multi-agent correction pipeline for a given normative and program doc.
+   */
+  app.post('/api/fix', async (req: Request, res: Response) => {
+    try {
+      const { normativeDocument, programDocument } = req.body;
+      if (!normativeDocument || !programDocument) {
+        return res.status(400).json({ success: false, error: 'Se requieren "normativeDocument" y "programDocument"' });
+      }
+
+      logger.info('API', `Starting fix pipeline: ${programDocument} against ${normativeDocument}`);
+
+      // Set headers for Chunked response
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Transfer-Encoding', 'chunked');
+
+      const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder);
+      let correctedText = '';
+
+      for await (const update of pipeline) {
+        res.write(JSON.stringify({ type: 'progress', step: update.step, content: update.content, isFinal: update.isFinal }) + '\n');
+        if (update.step === 'ProgramFixerAgent' && update.isFinal) {
+          correctedText = update.content;
+        }
+      }
+
+      if (!correctedText) {
+        throw new Error('El agente corrector no generó ningún contenido corregido.');
+      }
+
+      // Generate the PDF
+      res.write(JSON.stringify({ type: 'progress', step: 'PDFGenerator', content: 'Generando archivo PDF con formato oficial...', isFinal: false }) + '\n');
+      
+      const pdfBuffer = await generateCorrectedProgramPDF(programDocument, correctedText);
+      const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
+      correctedPdfs.set(downloadName, pdfBuffer);
+
+      res.write(JSON.stringify({
+        type: 'complete',
+        downloadUrl: `/api/fix/download/${encodeURIComponent(downloadName)}`,
+        correctedText
+      }) + '\n');
+
+      res.end();
+    } catch (error: any) {
+      logger.error('API', 'Error running fix pipeline', error);
+      res.write(JSON.stringify({ type: 'error', error: error.message }) + '\n');
+      res.end();
+    }
+  });
+
+  /**
+   * GET /api/fix/download/:fileName
+   * Downloads the corrected PDF.
+   */
+  app.get('/api/fix/download/:fileName', (req: Request, res: Response) => {
+    const fileName = req.params.fileName as string;
+    const buffer = correctedPdfs.get(fileName);
+    if (!buffer) {
+      return res.status(404).json({ success: false, error: 'Archivo no encontrado o expirado.' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.send(buffer);
   });
 
   // SPA fallback — serve index.html for any non-API route

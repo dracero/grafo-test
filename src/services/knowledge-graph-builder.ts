@@ -337,21 +337,24 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     return this.executeWrite(async (session) => {
       await session.run(`
         MERGE (d:Entity {name: $name})
-        ON CREATE SET d.createdAt = datetime(), d.type = 'DOCUMENT'
+        ON CREATE SET d.createdAt = datetime(), d.type = 'DOCUMENT', d.text = $text
+        ON MATCH SET d.text = $text
         SET d:Document:NormativeDocument
-      `, { name: report.normativeDocument });
+      `, { name: report.normativeDocument, text: report.normativeText || '' });
 
       await session.run(`
         MERGE (d:Entity {name: $name})
         ON CREATE SET
           d.createdAt = datetime(),
           d.type = 'DOCUMENT',
+          d.text = $text,
           d.total = $total,
           d.covered = $covered,
           d.partial = $partial,
           d.missing = $missing,
           d.coveragePercent = $coveragePercent
         ON MATCH SET
+          d.text = $text,
           d.total = $total,
           d.covered = $covered,
           d.partial = $partial,
@@ -364,6 +367,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         MERGE (d)-[:COMPARED_TO]->(n)
       `, {
         name: report.programDocument,
+        text: report.programText || '',
         total: report.summary.total,
         covered: report.summary.covered,
         partial: report.summary.partial,
@@ -441,6 +445,20 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
       await session.run(`
         MATCH (n)
         WHERE n:NormativeDocument OR n:ProgramDocument OR n:OntologyItem
+        DETACH DELETE n
+      `);
+    });
+  }
+
+  /**
+   * Clears the entire database (all nodes and relationships).
+   */
+  async clearEntireDatabase(): Promise<void> {
+    this.ensureConnected();
+    this.logger.info('KnowledgeGraph', 'Clearing the entire Neo4j database');
+    return this.executeWrite(async (session) => {
+      await session.run(`
+        MATCH (n)
         DETACH DELETE n
       `);
     });
@@ -528,6 +546,71 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         summary,
         timestamp: new Date().toISOString()
       };
+    });
+  }
+
+  async getNormativeOntology(normativeName: string): Promise<any[]> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (o:OntologyItem)-[:EXTRACTED_FROM]->(d:NormativeDocument {name: $normativeName})
+        RETURN o.id AS id, o.category AS category, o.requirement AS requirement, o.description AS description, o.keywords AS keywords
+        ORDER BY o.id
+      `, { normativeName });
+      return result.records.map(record => ({
+        id: record.get('id'),
+        category: record.get('category'),
+        requirement: record.get('requirement'),
+        description: record.get('description'),
+        keywords: record.get('keywords') || []
+      }));
+    });
+  }
+
+  async getProgramOntology(programName: string): Promise<any[]> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (e:Entity)
+        WHERE $programName IN e.documents AND e.type <> 'DOCUMENT' AND NOT e:OntologyItem
+        RETURN e.name AS name, e.type AS type, e.sourceText AS sourceText
+      `, { programName });
+      return result.records.map(record => ({
+        name: record.get('name'),
+        type: record.get('type'),
+        sourceText: record.get('sourceText')
+      }));
+    });
+  }
+
+  async getComplianceGaps(normativeName: string, programName: string): Promise<any[]> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (p:ProgramDocument {name: $programName})-[r:EVALUATED_AGAINST]->(o:OntologyItem)
+        WHERE r.status IN ['partial', 'missing']
+        RETURN o.id AS id, o.category AS category, o.requirement AS requirement, o.description AS description, r.status AS status, r.evidence AS evidence, r.suggestion AS suggestion
+      `, { programName });
+      return result.records.map(record => ({
+        id: record.get('id'),
+        category: record.get('category'),
+        requirement: record.get('requirement'),
+        description: record.get('description'),
+        status: record.get('status'),
+        evidence: record.get('evidence'),
+        suggestion: record.get('suggestion')
+      }));
+    });
+  }
+
+  async getProgramText(programName: string): Promise<string> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (p:ProgramDocument {name: $programName})
+        RETURN p.text AS text
+      `, { programName });
+      return result.records[0]?.get('text') || '';
     });
   }
 

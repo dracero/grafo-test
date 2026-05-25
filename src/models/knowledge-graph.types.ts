@@ -96,6 +96,11 @@ export interface KnowledgeGraphBuilder {
   clearPreviousComparisons(): Promise<void>;
 
   /**
+   * Clears the entire database (all nodes and relationships)
+   */
+  clearEntireDatabase(): Promise<void>;
+
+  /**
    * Retrieves the latest comparison report from the graph
    */
   getLatestComparison(): Promise<ComparisonReport | null>;

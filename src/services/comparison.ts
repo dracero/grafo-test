@@ -70,6 +70,8 @@ export interface ComparisonReport {
     coveragePercent: number;
   };
   timestamp: string;
+  normativeText?: string;
+  programText?: string;
 }
 
 // ── JSON recovery helpers ──────────────────────────────────────────────────
@@ -303,15 +305,11 @@ ${safeText}`;
   ): Promise<ComparisonResult[]> {
     logger.info(
       'Comparison',
-      `Comparando holísticamente: ${normativeOntology.length} normativos vs ${programOntology.length} del programa…`
+      `Comparando holísticamente en lotes: ${normativeOntology.length} normativos vs ${programOntology.length} del programa…`
     );
 
-    const normativeList = normativeOntology
-      .map(
-        (item) =>
-          `ID: ${item.id} | Categoría: ${item.category} | Requisito: ${item.requirement} | Descripción: ${item.description} | Keywords: ${(item.keywords || []).join(', ')}`
-      )
-      .join('\n');
+    const BATCH_SIZE = 100;
+    const allResults: ComparisonResult[] = [];
 
     const programList = programOntology
       .map(
@@ -320,18 +318,40 @@ ${safeText}`;
       )
       .join('\n');
 
-    const prompt = `Eres un experto en evaluación de programas educativos universitarios y análisis de similitud semántica.
+    for (let i = 0; i < normativeOntology.length; i += BATCH_SIZE) {
+      if (i > 0) {
+        logger.info('Comparison', 'Waiting 6 seconds to respect Gemini API rate limits (15/20 RPM)...');
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+      }
 
-Evalúa el CUMPLIMIENTO NORMATIVO de un programa frente a ${normativeOntology.length} requisitos normativos.
+      const batch = normativeOntology.slice(i, i + BATCH_SIZE);
+      logger.info(
+        'Comparison',
+        `Procesando lote ${Math.floor(i / BATCH_SIZE) + 1} de ${Math.ceil(
+          normativeOntology.length / BATCH_SIZE
+        )} (${batch.length} requisitos)…`
+      );
 
-Para CADA requisito normativo (hay exactamente ${normativeOntology.length}), determina:
+      const normativeList = batch
+        .map(
+          (item) =>
+            `ID: ${item.id} | Categoría: ${item.category} | Requisito: ${item.requirement} | Descripción: ${item.description} | Keywords: ${(item.keywords || []).join(', ')}`
+        )
+        .join('\n');
+
+      const prompt = `Eres un experto en evaluación de programas de materias universitarias y análisis de conformidad regulatoria.
+Analiza la cobertura del programa de materia frente a los siguientes ${batch.length} requisitos normativos.
+
+Para CADA requisito normativo (hay exactamente ${batch.length}), determina:
 - itemId: ID del requisito normativo
-- status: "covered" (cubierto completamente) | "partial" (cubierto parcialmente) | "missing" (ausente)
-- confidence: número entre 0.0 y 1.0
-- evidence: qué elementos del programa lo cubren o qué falta
-- suggestion: sugerencia concreta para mejorar (o "Ninguna" si está cubierto)
+- status: "covered" (cubierto completamente en el programa) | "partial" (cubierto parcialmente) | "missing" (ausente/no cubierto en el programa)
+- confidence: número entre 0.0 y 1.0 que indica tu certeza
+- evidence: 
+  * Si está "covered" o "partial": cita textualmente o resume los temas, contenidos, objetivos o prácticas específicas del programa que demuestran su cobertura.
+  * Si está "missing": explica detalladamente por qué no se encuentra en el programa (por ejemplo, si el requisito es una competencia docente general o de nivel institucional y por ende no aplica a una materia específica de física, indícalo claramente en lugar de dar una respuesta genérica).
+- suggestion: recomendación pedagógica específica y aplicable para incorporar este aspecto al programa, o "Ninguna" si ya está completamente cubierto o si no aplica a la materia.
 
-Usa razonamiento semántico: un requisito puede estar cubierto aunque se exprese con palabras diferentes.
+Usa razonamiento semántico avanzado: un requisito puede estar cubierto conceptualmente aunque se exprese con terminología diferente. Evita dar respuestas genéricas como "revisar manualmente".
 
 Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
 
@@ -346,7 +366,7 @@ Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo 
 ]}
 
 ═══════════════════════════════════════════════════════════
-REQUISITOS NORMATIVOS (${normativeOntology.length} items):
+REQUISITOS NORMATIVOS DE ESTE LOTE (${batch.length} items):
 ═══════════════════════════════════════════════════════════
 ${normativeList}
 
@@ -355,33 +375,50 @@ PROGRAMA DE LA MATERIA (${programOntology.length} items):
 ═══════════════════════════════════════════════════════════
 ${programList}`;
 
-    const response = await this.generateWithRetry(
-      {
-        model: MODEL_FLASH,
-        prompt,
-        output: { format: 'text' },
-        config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
-      },
-      'compareOntologies'
-    );
+      const response = await this.generateWithRetry(
+        {
+          model: MODEL_FLASH,
+          prompt,
+          output: { format: 'text' },
+          config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+        },
+        `compareOntologies_batch_${Math.floor(i / BATCH_SIZE) + 1}`
+      );
 
-    const rawText = response.text ?? '';
-    const rawResults = parseComparisonResponse(rawText);
+      const rawText = response.text ?? '';
+      const rawResults = parseComparisonResponse(rawText);
 
-    logger.info('Comparison', `✅ Comparación completada: ${rawResults.length} evaluaciones recibidas de ${normativeOntology.length} esperadas`);
+      const batchResults = rawResults
+        .filter((r: any) => r.itemId && r.status)
+        .map((r: any) => {
+          const item = batch.find((i) => i.id === r.itemId) || batch[0];
+          return {
+            item,
+            status: r.status as 'covered' | 'partial' | 'missing',
+            confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
+            evidence: String(r.evidence ?? ''),
+            suggestion: String(r.suggestion ?? ''),
+          };
+        });
 
-    return rawResults
-      .filter((r: any) => r.itemId && r.status)
-      .map((r: any) => {
-        const item = normativeOntology.find((i) => i.id === r.itemId) || normativeOntology[0];
-        return {
-          item,
-          status: r.status as 'covered' | 'partial' | 'missing',
-          confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
-          evidence: String(r.evidence ?? ''),
-          suggestion: String(r.suggestion ?? ''),
-        };
-      });
+      // Asegurar que todos los elementos del lote tengan un resultado
+      for (const item of batch) {
+        const found = batchResults.find((br) => br.item.id === item.id);
+        if (found) {
+          allResults.push(found);
+        } else {
+          allResults.push({
+            item,
+            status: 'missing',
+            confidence: 0.0,
+            evidence: 'No se obtuvo respuesta del modelo de lenguaje para este requisito durante el procesamiento.',
+            suggestion: 'Reintentar la comparación o verificar el documento de forma manual.'
+          });
+        }
+      }
+    }
+
+    return allResults;
   }
 
   async fullComparison(
@@ -418,6 +455,8 @@ ${programList}`;
       results,
       summary: { total, covered, partial, missing, coveragePercent },
       timestamp: new Date().toISOString(),
+      normativeText,
+      programText,
     };
   }
 }
