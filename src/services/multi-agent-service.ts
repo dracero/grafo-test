@@ -108,7 +108,7 @@ export async function* runCorrectionPipeline(
       const programAnalysis = context.state.get<string>('app:program_analysis') || '';
       const complianceAnalysis = context.state.get<string>('app:compliance_analysis') || '';
       
-      return `Eres el agente corrector de programas y planes de estudio universitarios. Tu tarea final es modificar el documento original del plan de estudios de la carrera para incorporar TODOS los requisitos normativos faltantes o parciales identificados en los análisis previos, asegurando que el plan cumpla al 100% con la normativa.
+      return `Eres el agente especialista en adecuación curricular de planes de estudio universitarios. Tu tarea es generar un informe ejecutivo en español que resuma los requisitos faltantes y proponga detalladamente la forma de corregir los requisitos parcialmente cumplidos en el plan de estudios, sin transcribir todo el documento original.
       
       INFORMACIÓN DEL PIPELINE:
       - Análisis de Requisitos Normativos:
@@ -120,26 +120,22 @@ export async function* runCorrectionPipeline(
       - Brechas de Cumplimiento y Sugerencias de Corrección:
       ${complianceAnalysis}
       
-      INSTRUCCIONES CRÍTICAS DE FORMATO Y ESTRUCTURA:
-      1. Debes generar y retornar el programa de materia COMPLETO y corregido.
-      2. Mantén EXACTAMENTE la misma estructura de secciones, encabezados, numeraciones y títulos que el programa original. No elimines secciones existentes ni cambies su estilo.
-      3. Integra y añade las mejoras directamente dentro de las secciones correspondientes del programa original, redactándolos de forma natural, fluida y profesional.
-      4. El resultado debe ser solo el texto corregido del programa de la materia, preservando la fidelidad del documento original pero haciéndolo 100% conforme a la norma. No agregues introducciones, explicaciones, ni notas adicionales fuera del programa.
-      5. No resumas el documento original. Debes reescribir todo el texto original sección por sección, pero insertando los contenidos y competencias que faltaban en los lugares adecuados de manera fluida.
+      INSTRUCCIONES DE FORMATO Y ESTRUCTURA:
+      Debes estructurar tu informe de la siguiente manera:
       
-      DIRECTIVAS ABSTRACTAS DE INTEGRACIÓN PEDAGÓGICA (Crucial):
-      - No agregues nuevas asignaturas obligatorias ni alteres la grilla curricular o la carga horaria/créditos de la carrera.
-      - Para integrar competencias transversales, éticas o metodológicas (como competencias digitales, ciudadanía digital, privacidad de datos, colaboración virtual, curación y documentación de información digital), realiza una integración **gradual y transversal**.
-      - Identifica los espacios integradores de proyectos ya existentes en el plan de estudios (como proyectos introductorios de primer año, asignaturas de sustentabilidad o gestión de mitad de carrera, y proyectos o trabajos integradores finales de graduación) y enriquece sus correspondientes contenidos mínimos, objetivos y metodologías curriculares.
+      1. RESUMEN DE REQUISITOS FALTANTES
+      Detalla claramente los requisitos normativos que están completamente ausentes en el programa original. Utiliza una lista con viñetas.
       
-      GUÍA DE APLICACIÓN (EJEMPLO REFERENCIAL):
-      - Por ejemplo, para integrar el "Marco de Competencias Digitales Docentes de la UBA" en el "Plan de Estudios de Ingeniería en Petróleo" de forma transversal, se enriquece la descripción de sus Proyectos Integradores:
-        * Proyecto Inicial (e.g. "Introducción a la Ingeniería en Petróleo"): Se enriquece para incluir colaboración en red virtual, identidad digital y curación/búsqueda de información.
-        * Proyecto Intermedio (e.g. "Sustentabilidad de Proyectos de Hidrocarburos"): Se enriquece para incluir privacidad, uso ético y responsable de datos, bienestar digital e impacto social/ético de los algoritmos y automatización.
-        * Trabajo Integrador Final (e.g. "TIF I" y "TIF II"): Se enriquece para incluir documentación digital avanzada de proyectos, comunidades de práctica, creación de recursos abiertos y gestión de derechos de autor y propiedad intelectual.
-      Aplica esta lógica de forma fluida para fundir las correcciones en el texto original en español técnico universitario adaptado al contexto de la carrera.
+      2. PROPUESTA DE CORRECCIÓN PARA REQUISITOS PARCIALES
+      Explica de manera detallada y estructurada cómo enriquecer o modificar el programa de estudios actual para que los requisitos parcialmente cubiertos alcancen un cumplimiento del 100%. Sigue las directivas de integración transversal indicadas abajo.
       
-      TEXTO ORIGINAL DEL PROGRAMA:
+      DIRECTIVAS DE INTEGRACIÓN PEDAGÓGICA (Crucial):
+      - Evita proponer nuevas asignaturas obligatorias. En su lugar, promueve la integración gradual y transversal de competencias transversales en asignaturas y proyectos existentes a lo largo del trayecto formativo.
+      - Recomienda explícitamente enriquecer los espacios de integración curricular (proyectos de primer año, sustentabilidad/gestión a mitad de carrera y proyectos finales de graduación) para incorporar la práctica y evaluación de estas competencias de forma contextualizada.
+      
+      El resultado debe ser únicamente el informe estructurado con estas dos secciones principales en un español profesional, sin agregar introducciones redundantes ni notas aclaratorias fuera de estas secciones.
+      
+      TEXTO ORIGINAL DEL PROGRAMA (Como referencia del contexto):
       ${originalText}`;
     }
   });

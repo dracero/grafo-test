@@ -140,6 +140,10 @@ export async function generateCorrectedProgramPDF(
       for (let j = 0; j < pages.count; j++) {
         doc.switchToPage(j);
 
+        // Temporarily change bottom margin to 0 to prevent footer from triggering auto-page breaks
+        const oldBottomMargin = doc.page.margins.bottom;
+        doc.page.margins.bottom = 0;
+
         // Header (Skip first page)
         if (j > 0) {
           doc.fontSize(8)
@@ -171,6 +175,9 @@ export async function generateCorrectedProgramPDF(
              width: 100,
              align: 'right'
            });
+
+        // Restore bottom margin
+        doc.page.margins.bottom = oldBottomMargin;
       }
 
       doc.end();

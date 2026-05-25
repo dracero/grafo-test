@@ -13,6 +13,6 @@ export default async function handler(req: Request, res: Response) {
     return app(req, res);
   } catch (err: any) {
     console.error('Failed to initialize server for Vercel:', err);
-    res.status(500).json({ success: false, error: 'Server initialization failed' });
+    res.status(500).json({ success: false, error: 'Server initialization failed', details: err.message });
   }
 }

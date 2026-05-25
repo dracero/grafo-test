@@ -20,6 +20,7 @@ import { ComparisonService } from './services/comparison';
 import { runCorrectionPipeline } from './services/multi-agent-service';
 import { generateCorrectedProgramPDF } from './services/pdf-generator';
 import { EntityType } from './models/genkit.types';
+import { maybeSetOtelProviders } from '@google/adk';
 
 const logger = createLogger();
 
@@ -30,16 +31,25 @@ export async function createServerApp() {
   const configManager = new ConfigurationManager();
   configManager.load();
 
+  // Initialize OpenTelemetry Tracing for Agents (Langsmith tracking)
+  try {
+    maybeSetOtelProviders();
+    logger.info('Server', 'OpenTelemetry Tracing initialized for Agent trajectories');
+  } catch (otelError) {
+    logger.error('Server', 'Failed to initialize OpenTelemetry Tracing', otelError as Error);
+  }
+
   for (const warning of configManager.getWarnings()) {
     logger.warn('Configuration', warning);
   }
 
   const validation = configManager.validate();
   if (!validation.isValid) {
-    logger.error('Configuration', 'Configuration validation failed', new Error(validation.errors.join(', ')), {
+    const errorMsg = `Configuration validation failed: ${validation.errors.join(', ')}`;
+    logger.error('Configuration', errorMsg, new Error(errorMsg), {
       missingFields: validation.missingFields
     });
-    process.exit(1);
+    throw new Error(errorMsg);
   }
 
   logger.info('Configuration', 'Configuration loaded and validated successfully');

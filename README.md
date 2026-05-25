@@ -1,21 +1,24 @@
-# 📚 Normative & Program Knowledge Graph (Genkit + Neo4j)
+# 📚 Normative & Program Knowledge Graph (Genkit + Neo4j + ADK)
 
-Este sistema de procesamiento holístico extrae la **Ontología Normativa** y los contenidos de **Programas Educativos** (Sílabos) a partir de documentos PDF, y mediante Inteligencia Artificial genera un Grafo de Conocimiento (Knowledge Graph) estructurado en **Neo4j** para evaluar el cumplimiento normativo universitario.
+Este sistema de procesamiento holístico extrae la **Ontología Normativa** y los contenidos de **Programas Educativos** (Sílabos) a partir de documentos PDF, y mediante Inteligencia Artificial y un sistema multi-agente, construye un Grafo de Conocimiento (Knowledge Graph) estructurado en **Neo4j** para evaluar el cumplimiento normativo universitario y generar propuestas automáticas de adecuación curricular sin páginas en blanco.
 
-La arquitectura está potenciada por **Google Genkit**, **Gemini 2.5 Flash**, y el ecosistema de **Agent Skills de Neo4j**.
+La arquitectura está potenciada por **Google Genkit**, **Gemini 2.5 Flash**, **Agent Development Kit (ADK) de Google** y el ecosistema de **Agent Skills de Neo4j**.
+
+---
 
 ## 🚀 Arquitectura y Funcionamiento
 
-El flujo de trabajo central de la aplicación consta de 3 fases:
+El flujo de trabajo central de la aplicación consta de tres fases principales: extracción/procesamiento, comparación en grafo/búsqueda semántica, y corrección guiada por agentes.
 
-### Diagrama de Flujo de Datos Global
+### 1. Diagrama de Flujo de Datos Global
 
 ```mermaid
 graph TD
-    A[Cliente / Frontend] -->|Sube Documentos| B(API REST - Express)
-    B --> C{Tipo de Ruta}
+    A[Cliente / Frontend] -->|Sube PDF Normativo y Programa| B(API REST - Express)
+    B --> C{Ruta del API}
     C -->|POST /api/compare| D[PDF Processor]
     C -->|POST /api/search| E[Genkit - Retriever]
+    C -->|POST /api/fix| K[Pipeline de Agentes ADK]
     
     D -->|Extrae Texto| F[Comparison Service]
     F -->|Prompt Holístico| G((Gemini 2.5 Flash))
@@ -25,11 +28,16 @@ graph TD
     H -->|Transacciones Cypher| I[(Neo4j DB)]
     H -->|Indexación Vectorial| J[Genkit - Indexer Agent Skill]
     J -->|Guarda Embeddings| I
+
+    K -->|Traza Spans| L[OpenTelemetry Provider]
+    L -->|Manda Traces OTLP| M[Langsmith Dashboard]
+    K -->|Informe de Adecuación| N[PDF Generator]
+    N -->|PDF sin hojas vacías| B
 ```
 
-### Funcionamiento del LLM (Comparación Holística)
+### 2. Funcionamiento de la Comparación Holística (Genkit)
 
-El modelo de lenguaje (Gemini 2.5 Flash) realiza la abstracción en 3 llamadas estructurales (Generative Steps):
+El modelo de lenguaje (Gemini 2.5 Flash) realiza la abstracción de ontologías en tres llamadas estructurales coordinadas por el `ComparisonService`:
 
 ```mermaid
 sequenceDiagram
@@ -37,102 +45,168 @@ sequenceDiagram
     participant LLM as Gemini 2.5 Flash
     
     App->>LLM: 1. ExtractOntology (Texto Normativo)
-    Note over LLM: Prompt exige extracción exhaustiva<br/>de requisitos en JSON.
+    Note over LLM: Prompt exige extracción exhaustiva<br/>de requisitos en formato estructurado JSON.
     LLM-->>App: Ontología Normativa (Array de JSON)
     
     App->>LLM: 2. ExtractProgramOntology (Texto Programa)
-    Note over LLM: Extracción de contenidos<br/>y objetivos educativos.
+    Note over LLM: Extracción de contenidos mínimos<br/>y objetivos educativos.
     LLM-->>App: Ontología del Programa (Array de JSON)
     
     App->>LLM: 3. CompareOntologies (Ambas Ontologías)
-    Note over LLM: Analiza semánticamente el<br/>nivel de cobertura (covered, partial, missing)
+    Note over LLM: Analiza semánticamente el nivel de cobertura<br/>(covered, partial, missing)
     LLM-->>App: Resultados de Cumplimiento (JSON)
 ```
 
-1. **Extracción y Procesamiento:**
-   - La API recibe los PDFs normativos y del programa a través de Endpoints REST en **Express.js** (`multer`).
-   - Se utiliza `pdf-parse` para extraer el texto y preservar su estructura de párrafos básicos.
-2. **Generación de Ontologías y Comparación (Gemini 2.5 Flash):**
-   - El texto extraído de los documentos (hasta 700k caracteres por documento) se procesa de manera *holística* mediante **Google Gemini 2.5 Flash**. Se evitan técnicas de *chunking* para garantizar que el LLM comprenda la estructura global y emita una evaluación precisa.
-   - El sistema analiza la brecha o nivel de cumplimiento entre los requisitos normativos extraídos y los contenidos dictados en la materia. 
-   - Para manejar llamadas masivas sin riesgo de colapso, el sistema aumenta los tiempos de espera a nivel de red a 10 minutos (usando `undici` Global Dispatcher).
-3. **Persistencia Híbrida Vectorial y Estructural:**
-   - **Genkitx-Neo4j Agent Skills:** Se utiliza para la indexación y recuperación vectorial. Cuando el modelo genera los nodos, los insertamos en Neo4j pasándolos por la herramienta de `ai.index` o buscando mediante el retriever de Genkit, automatizando por completo la capa de *embeddings*.
-   - **Native Neo4j Driver:** Mantenemos llamadas Cypher manuales (Transaccionales) exclusivamente para orquestar la topología de la base de datos de grafos, enlazar entidades lógicas (ej. relacionales "COVERS", "REQUIRES") y actualizar propiedades.
+1.  **Extracción y Procesamiento**: La API recibe los PDFs normativos y del programa a través de endpoints REST en **Express.js** (`multer`). Se utiliza `pdf-parse` para extraer el texto y preservar su estructura de párrafos básicos.
+2.  **Generación de Ontologías y Comparación (Gemini 2.5 Flash)**: El texto extraído de los documentos (hasta 700k caracteres por documento) se procesa de manera *holística* mediante **Google Gemini 2.5 Flash**. Se evitan técnicas de *chunking* para garantizar que el LLM comprenda la estructura global y emita una evaluación precisa de cumplimiento.
+3.  **Persistencia Híbrida Vectorial y Estructural**:
+    *   **Genkitx-Neo4j Agent Skills**: Se utiliza para la indexación y recuperación vectorial. Cuando el modelo genera los nodos, los insertamos en Neo4j pasándolos por la herramienta de `ai.index` o buscando mediante el retriever de Genkit, automatizando por completo la capa de *embeddings*.
+    *   **Native Neo4j Driver**: Mantenemos llamadas Cypher manuales (Transaccionales) exclusivamente para orquestar la topología de la base de datos de grafos, enlazar entidades lógicas (ej. relacionales `COVERS`, `REQUIRES`) y actualizar propiedades de comparación.
 
-## 📦 Dependencias Principales
+---
 
-El proyecto usa tecnologías modernas de AI y Web:
+## 🤖 Sistema Multi-Agente (ADK)
 
-### Dependencias Core
-- **`@genkit-ai/core` & `@genkit-ai/google-genai`**: Framework principal de AI que orquesta las llamadas a Gemini, maneja los prompts y estandariza los metadatos y esquemas.
-- **`genkitx-neo4j`**: Plugin de Agent Skills para Genkit. Provee la capacidad de inyectar indexadores y *retrievers* para vectorizar de forma nativa la ontología en Neo4j.
-- **`genkitx-groq`**: Plugin de LLM alternativo soportado por la arquitectura.
-- **`neo4j-driver`**: Controlador oficial de Neo4j para manejar transacciones ACID, subgrafos complejos y estructuras lógicas no soportadas nativamente por las Skills.
-- **`express` & `cors`**: Servidor Web ligero.
-- **`pdf-parse` & `multer`**: Utilidades para el manejo de streams de archivos `multipart/form-data` y extracción de texto raw de los PDFs.
-- **`undici`**: Reemplazo nativo de fetch en Node para manipular globalmente el tiempo de espera HTTP (`setGlobalDispatcher`) durante generaciones largas de IA.
+Cuando un programa de materia cuenta con brechas (requisitos faltantes o parciales), el usuario puede activar la corrección inteligente desde el frontend. Esta acción dispara el **Pipeline de Agentes** definido en [multi-agent-service.ts](file:///media/dracero/08c67654-6ed7-4725-b74e-50f29ea60cb21/pythonAI-Others/grafo-test/src/services/multi-agent-service.ts).
 
-### Dependencias de Desarrollo
-- **`typescript` & `ts-node`**: Entorno estático de tipado.
-- **`jest` & `ts-jest` & `fast-check`**: Framework de testing con Property-Based Testing para análisis de robustez estructural.
+### Arquitectura de Agentes Secuenciales
 
-## 🛠 Instalación y Uso Local
+El pipeline está orquestado mediante un `SequentialAgent` que ejecuta de forma ordenada cuatro agentes especialistas de ADK:
+
+```mermaid
+graph LR
+    A[NormativeOntologyAgent] --> B[ProgramOntologyAgent]
+    B --> C[ComplianceGapsAgent]
+    C --> D[ProgramFixerAgent]
+    
+    style A fill:#bfdbfe,stroke:#3b82f6
+    style B fill:#bfdbfe,stroke:#3b82f6
+    style C fill:#fef3c7,stroke:#d97706
+    style D fill:#bbf7d0,stroke:#16a34a
+```
+
+1.  **`NormativeOntologyAgent`**: Consulta la base de datos de grafos de Neo4j para recuperar la ontología normativa analizada. Resume y estructura los requisitos que cualquier plan de estudios debe cumplir.
+2.  **`ProgramOntologyAgent`**: Consulta Neo4j para obtener los contenidos y la organización del programa actual de la materia (objetivos originales, temas).
+3.  **`ComplianceGapsAgent`**: Lee las brechas normativas identificadas entre ambos documentos. Consolida y estructura las deficiencias y redacta sugerencias basadas en directivas pedagógicas específicas:
+    *   *Transversalidad*: No propone nuevas materias para competencias transversales (como herramientas digitales o ética).
+    *   *Gradualidad*: Recomienda insertar y enriquecer los espacios de integración curricular existentes (proyectos introductorios de primer año, sustentabilidad y trabajos integradores finales).
+4.  **`ProgramFixerAgent`**: Es el agente de cierre. Toma el análisis del pipeline y produce un **Informe de Adecuación Ejecutivo** compuesto por dos secciones:
+    *   **Resumen de Requisitos Faltantes** (con viñetas de lo ausente).
+    *   **Propuesta de Corrección para Requisitos Parciales** (cómo enriquecer transversalmente el plan de estudios).
+    *   *Optimización*: No reescribe todo el programa de estudios original. Esto previene el desbordamiento de tokens y acelera drásticamente el flujo de procesamiento.
+
+---
+
+## 📡 Telemetría e Integración con Langsmith
+
+El sistema de agentes de ADK está instrumentado utilizando el estándar de **OpenTelemetry (OTel)**. Toda la ejecución de los agentes, las herramientas llamadas y las consultas internas a modelos de Gemini son capturadas e integradas con **Langsmith** para su trazabilidad y evaluación en producción.
+
+### Flujo de Datos de Telemetría
+
+```mermaid
+sequenceDiagram
+    participant ADK as Agent Development Kit (ADK)
+    participant OTel as OpenTelemetry Provider (Node)
+    participant LS as Langsmith API Collector
+    
+    ADK->>OTel: 1. Inicia invocación (Agent Span)
+    ADK->>OTel: 2. Ejecuta llamada a Gemini (LLM Span)
+    ADK->>OTel: 3. Ejecuta Tool Call (Tool Span)
+    OTel->>LS: 4. Exporta Traces OTLP en formato Batch (HTTP POST /v1/traces)
+    Note over LS: Registra la trayectoria completa de los agentes,<br/>latencia, inputs, outputs y tokens.
+```
+
+### Configuración en el `.env`
+Para habilitar el registro de las trayectorias de agentes en Langsmith, se configuran las variables en [.env](file:///media/dracero/08c67654-6ed7-4725-b74e-50f29ea60cb21/pythonAI-Others/grafo-test/.env):
+```ini
+# Langsmith Project credentials
+LANGSMITH_API_KEY=tu_api_key_de_langsmith
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_PROJECT=grafo
+
+# Configuración estándar de OpenTelemetry para exportar trazas a Langsmith
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://api.smith.langchain.com/v1/traces
+OTEL_EXPORTER_OTLP_HEADERS=x-api-key=tu_api_key_de_langsmith
+```
+
+El servidor web Express ([server.ts](file:///media/dracero/08c67654-6ed7-4725-b74e-50f29ea60cb21/pythonAI-Others/grafo-test/src/server.ts)) carga automáticamente esta configuración al arrancar y ejecuta `maybeSetOtelProviders()` de ADK para dar de alta el pipeline de OpenTelemetry.
+
+---
+
+## 🧪 Arnés de Evaluación (Evaluation Harness)
+
+Para validar de forma automatizada y sin intervención manual el correcto funcionamiento del pipeline de agentes y el formato del PDF resultante, se diseñó e implementó un Arnés de Evaluación en [run-eval.ts](file:///media/dracero/08c67654-6ed7-4725-b74e-50f29ea60cb21/pythonAI-Others/grafo-test/tests/harness/run-eval.ts).
+
+### Flujo de Validación del Arnés
+
+```mermaid
+graph TD
+    A[Iniciar Arnés] --> B[Cargar Env & OTel Telemetry]
+    B --> C[Conectar a Neo4j]
+    C --> D[Obtener Documentos de Prueba]
+    D --> E[Ejecutar runCorrectionPipeline]
+    E --> F{Aserciones de Contenido}
+    F -->|¿Falta Sección 1 o 2?| G[Fallo de Evaluación]
+    F -->|Secciones Correctas| H[Generar PDF con PDFKit]
+    H --> I[Parsear PDF con pdf-parse]
+    I --> J{Aserciones de Páginas}
+    J -->|¿Página Vacía/Sin Caracteres?| G
+    J -->|Páginas Válidas| K[Éxito - Retorna 0]
+```
+
+### Aserciones Ejecutadas:
+1.  **Aserciones de Contenido**: Verifica mediante análisis de texto que la respuesta final del agente contenga explícitamente las secciones estructuradas requeridas:
+    *   `1. RESUMEN DE REQUISITOS FALTANTES`
+    *   `2. PROPUESTA DE CORRECCIÓN PARA REQUISITOS PARCIALES`
+2.  **Prevención de Páginas en Blanco (Bug de Auto-Pagination)**: 
+    *   En [pdf-generator.ts](file:///media/dracero/08c67654-6ed7-4725-b74e-50f29ea60cb21/pythonAI-Others/grafo-test/src/services/pdf-generator.ts) se corrigió un bug clásico de PDFKit en el cual posicionar el pie de página (`pageHeight - 36`) por debajo del margen inferior (`54pt`) disparaba el auto-salto de página y añadía hojas vacías al final. El generador ahora establece temporalmente `doc.page.margins.bottom = 0` al dibujar las cabeceras/pies de página y lo restaura inmediatamente.
+    *   El Arnés de Evaluación analiza página por página el texto extraído del PDF final. Si la longitud de caracteres en el cuerpo de cualquier página es 0, el arnés falla inmediatamente con error `exit 1`.
+
+---
+
+## 🛠 Instalación y Scripts de Ejecución
 
 ### 1. Requisitos
-- **Node.js 18+** (Recomendado versión 20 LTS o superior).
-- Una instancia de **Neo4j 5.x** corriendo localmente o en AuraDB.
-- API Key de **Google Generative AI** (AI Studio).
+*   **Node.js 18+** (Recomendado versión 20 LTS o superior).
+*   Una instancia de **Neo4j 5.x** corriendo localmente o en AuraDB.
+*   API Key de **Google Generative AI** (AI Studio) y de **Langsmith**.
 
-### 2. Configuración del `.env`
-Renombra `.env.example` a `.env` y rellena las variables:
-```ini
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=password
-GOOGLE_GENAI_API_KEY=tu_api_key_de_gemini
-PORT=3000
-```
+### 2. Comandos Disponibles
 
-### 3. Ejecución
+*   **Levantar el entorno de desarrollo local**:
+    ```bash
+    npm run dev
+    ```
+*   **Correr pruebas unitarias (Jest)**:
+    ```bash
+    npm run test
+    ```
+*   **Verificar tipos y compilación de TypeScript**:
+    ```bash
+    npm run lint
+    ```
+*   **Ejecutar el Arnés de Evaluación (Verificación Completa)**:
+    ```bash
+    npm run test:harness
+    ```
+
+### 3. Verificación Completa a Demanda (ini.sh)
+Hemos empaquetado todo el proceso de salud de la aplicación en el script ejecutable [ini.sh](file:///media/dracero/08c67654-6ed7-4725-b74e-50f29ea60cb21/pythonAI-Others/grafo-test/ini.sh). Al ejecutar `./ini.sh`, el sistema realiza automáticamente los siguientes pasos en orden:
+1.  Verificación e instalación de dependencias del proyecto (`npm install`).
+2.  Chequeo estático de tipos de TypeScript (`npm run lint`).
+3.  Ejecución de la suite de pruebas unitarias (`npm run test`).
+4.  Lanzamiento del Arnés de Evaluación completo (`npm run test:harness`) con carga automática de OTel para su visualización en Langsmith.
+
+Para ejecutar la verificación on-demand:
 ```bash
-npm install
-npm run dev
+./ini.sh
 ```
 
-El servidor quedará a la escucha en el puerto `:3000`. Puedes ingresar a `http://localhost:3000/api/graph` para probar.
+---
 
 ## ☁️ Despliegue en Vercel
 
-El proyecto fue refactorizado y preparado específicamente para desplegarse como **Serveless Functions** en Vercel. 
+El proyecto está preparado para desplegarse como **Serverless Functions** en Vercel.
 
-### Ajustes Implementados para Vercel
-1. **Archivo `vercel.json`**: Enruta el tráfico hacia la carpeta `api/` (función serverless) en lugar del puerto web local. Fija el timeout en 60 segundos (depende de tu plan).
-2. **Proxy Handler (`api/index.ts`)**: Encapsula y exporta asincrónicamente la App de Express. Esto satisface el wrapper Node.js de Vercel.
-3. **Protección de FileSystem**: En Vercel, el sistema de ficheros es *Read-Only*. El `PDFProcessor` fue adaptado para ignorar errores silenciosamente al tratar de crear las carpetas locales (`processed`/`failed`). Las llamadas API como `/api/compare` procesan el PDF directamente desde memoria con buffers `multer`.
-
-**Nota de Limitación de Timeout:** Dado que Vercel *Hobby* limita las ejecuciones Serverless de entre 10 y 60 segundos y la inferencia holística de Gemini puede durar minutos, las comparaciones intensivas deben ser lanzadas localmente o Vercel devolverá un error `504 Gateway Timeout`.
-
-## 🧪 Pruebas y Endpoints Principales
-
-- `GET /api/graph` - Obtiene las entidades y relaciones optimizadas para frontend (nodos semánticos).
-- `GET /api/graph/raw` - Devuelve todos los nodos normativos del grafo generados por la comparación.
-- `POST /api/search` - Prueba del Agent Skill vectorial `genkitx-neo4j`. Pásale `{ "query": "..." }` y el motor te devolverá los nodos más similares almacenados en embeddings.
-- `POST /api/compare` - Sube de forma estructurada los archivos *normative* y *program*. Realiza la abstracción completa y lo almacena en DB.
-
-## 📡 Observabilidad y Trazas (¿Por qué no lo veo en LangSmith?)
-
-A diferencia de proyectos construidos con LangChain, este proyecto está construido enteramente sobre **Google Genkit**. Por lo tanto, las trazas y la ejecución del LLM **no aparecerán en LangSmith**. 
-
-Genkit provee su propia interfaz de desarrollo local para ver cada paso, los prompts exactos, la respuesta del LLM y las métricas de rendimiento.
-
-Para ver las trazas locales de tu LLM, en una terminal paralela ejecuta:
-```bash
-npx genkit start
-```
-Esto abrirá el **Genkit Developer UI** en tu navegador (usualmente en `localhost:4000`), donde podrás inspeccionar visualmente todas las peticiones a Gemini y el comportamiento de los Agent Skills en tiempo real.
-
-Para ejecutar la base de testing local:
-```bash
-npm test
-```
+1.  **Configuración de `vercel.json`**: Enruta las llamadas a `/api/*` hacia la función serverless definida en `api/index.ts`.
+2.  **Manejo de FileSystem**: Adaptado para no fallar en entornos Read-Only al realizar el procesamiento de PDFs y guardado de archivos temporales en memoria (usando buffers `multer`).
