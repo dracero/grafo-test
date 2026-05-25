@@ -61,6 +61,7 @@ export interface ComparisonReport {
   normativeDocument: string;
   programDocument: string;
   ontology: OntologyItem[];
+  programOntology?: OntologyItem[];
   results: ComparisonResult[];
   summary: {
     total: number;
@@ -452,6 +453,7 @@ ${programList}`;
       normativeDocument: normativeName,
       programDocument: programName,
       ontology,
+      programOntology,
       results,
       summary: { total, covered, partial, missing, coveragePercent },
       timestamp: new Date().toISOString(),

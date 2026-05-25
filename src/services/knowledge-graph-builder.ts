@@ -410,6 +410,32 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         });
       }
 
+      if (report.programOntology) {
+        for (const item of report.programOntology) {
+          await session.run(`
+            MERGE (e:Entity {name: $name})
+            ON CREATE SET
+              e.id = randomUUID(),
+              e.type = $type,
+              e.sourceText = $sourceText,
+              e.documents = [$sourceDocument],
+              e.createdAt = datetime(),
+              e.updatedAt = datetime()
+            ON MATCH SET
+              e.type = $type,
+              e.updatedAt = datetime()
+            WITH e
+            WHERE NOT $sourceDocument IN e.documents
+            SET e.documents = e.documents + [$sourceDocument]
+          `, {
+            name: item.requirement || item.description || item.id,
+            type: item.category || 'CONCEPT',
+            sourceText: item.description || item.requirement || '',
+            sourceDocument: report.programDocument
+          });
+        }
+      }
+
       for (const res of report.results) {
         const uniqueName = `${report.normativeDocument}_${res.item.id}`;
         await session.run(`
