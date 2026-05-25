@@ -33,10 +33,9 @@ export async function createServerApp() {
 
   // Initialize OpenTelemetry Tracing for Agents (Langsmith tracking)
   try {
-    maybeSetOtelProviders();
-    logger.info('Server', 'OpenTelemetry Tracing initialized for Agent trajectories');
+    logger.info('Server', 'OpenTelemetry Tracing is handled natively by instrumentation.ts');
   } catch (otelError) {
-    logger.error('Server', 'Failed to initialize OpenTelemetry Tracing', otelError as Error);
+    logger.error('Server', 'Failed to log OpenTelemetry Tracing', otelError as Error);
   }
 
   for (const warning of configManager.getWarnings()) {

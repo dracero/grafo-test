@@ -17,7 +17,7 @@ graph TD
     A[Cliente / Frontend] -->|Sube PDF Normativo y Programa| B(API REST - Express)
     B --> C{Ruta del API}
     C -->|POST /api/compare| D[PDF Processor]
-    C -->|POST /api/search| E[Genkit - Retriever]
+    C -->|POST /api/search| E[Neo4j Agent Skills - Retriever]
     C -->|POST /api/fix| K[Pipeline de Agentes ADK]
     
     D -->|Extrae Texto| F[Comparison Service]
@@ -26,8 +26,8 @@ graph TD
     
     F -->|Guarda Reporte| H[Knowledge Graph Builder]
     H -->|Transacciones Cypher| I[(Neo4j DB)]
-    H -->|Indexación Vectorial| J[Genkit - Indexer Agent Skill]
-    J -->|Guarda Embeddings| I
+    H -->|Indexación Vectorial| J[Neo4j Agent Skills - Indexer]
+    J -->|Conexión Automática y Embeddings| I
 
     K -->|Traza Spans| L[OpenTelemetry Provider]
     L -->|Manda Traces OTLP| M[Langsmith Dashboard]
@@ -59,9 +59,10 @@ sequenceDiagram
 
 1.  **Extracción y Procesamiento**: La API recibe los PDFs normativos y del programa a través de endpoints REST en **Express.js** (`multer`). Se utiliza `pdf-parse` para extraer el texto y preservar su estructura de párrafos básicos.
 2.  **Generación de Ontologías y Comparación (Gemini 2.5 Flash)**: El texto extraído de los documentos (hasta 700k caracteres por documento) se procesa de manera *holística* mediante **Google Gemini 2.5 Flash**. Se evitan técnicas de *chunking* para garantizar que el LLM comprenda la estructura global y emita una evaluación precisa de cumplimiento.
-3.  **Persistencia Híbrida Vectorial y Estructural**:
-    *   **Genkitx-Neo4j Agent Skills**: Se utiliza para la indexación y recuperación vectorial. Cuando el modelo genera los nodos, los insertamos en Neo4j pasándolos por la herramienta de `ai.index` o buscando mediante el retriever de Genkit, automatizando por completo la capa de *embeddings*.
-    *   **Native Neo4j Driver**: Mantenemos llamadas Cypher manuales (Transaccionales) exclusivamente para orquestar la topología de la base de datos de grafos, enlazar entidades lógicas (ej. relacionales `COVERS`, `REQUIRES`) y actualizar propiedades de comparación.
+3.  **Conexión y Persistencia (Neo4j Agent Skills)**:
+    *   **Conexión Genkit a través de Neo4j Agent Skills**: Para conectarnos a la base de datos de grafos y manejar las operaciones vectoriales, empleamos el plugin `genkitx-neo4j` (Neo4j Agent Skills). Este plugin se configura directamente en la instanciación de Genkit, pasándole o inyectando las credenciales (URI, Username, Password). Esto permite que todo el framework de agentes se conecte a Neo4j de forma transparente y automática.
+    *   **Indexación y Búsqueda**: Las operaciones se manejan pasándolas por las herramientas `ai.index` (para guardar entidades generadas por el modelo en el grafo) y mediante el *retriever* para hacer búsquedas vectoriales, delegando en los *Agent Skills* toda la capa de conectividad y generación de embeddings.
+    *   **Native Neo4j Driver**: Mantenemos llamadas Cypher manuales (Transaccionales) exclusivamente para orquestar la topología compleja de la base de datos de grafos, enlazar entidades lógicas (ej. relaciones como `COVERS`, `REQUIRES`) y actualizar propiedades de comparación.
 
 ---
 

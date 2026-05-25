@@ -724,7 +724,6 @@
         }
       });
 
-      document.getElementById('btn-close-modal').disabled = true;
       document.getElementById('btn-download-pdf').style.display = 'none';
 
       try {
@@ -784,7 +783,7 @@
           }
         });
       } finally {
-        document.getElementById('btn-close-modal').disabled = false;
+        // Modal can be closed by the user at any time
       }
     }
 
@@ -875,7 +874,7 @@
 
       <!-- Action buttons -->
       <div style="display: flex; justify-content: flex-end; gap: 12px;">
-        <button id="btn-close-modal" class="filter-tab" style="padding: 8px 18px; font-size: 0.85rem; height: auto;" disabled>Cerrar</button>
+        <button id="btn-close-modal" class="filter-tab" style="padding: 8px 18px; font-size: 0.85rem; height: auto; cursor: pointer;">Cerrar</button>
         <a id="btn-download-pdf" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-cyan), #0891b2); box-shadow: 0 0 18px rgba(6, 182, 212, 0.25); text-decoration: none; display: none; padding: 10px 20px; font-size: 0.85rem; font-weight: 700; align-items: center; gap: 8px; height: auto;">
           📥 Descargar PDF Corregido
         </a>
