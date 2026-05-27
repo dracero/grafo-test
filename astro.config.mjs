@@ -15,6 +15,7 @@ export default defineConfig({
       }),
   vite: {
     ssr: {
+      noExternal: ['@google/adk', 'lodash-es'],
       // These native/binary packages must stay external (not bundled)
       external: [
         'neo4j-driver',
