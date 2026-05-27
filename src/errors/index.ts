@@ -24,9 +24,12 @@ export {
 // Genkit API errors
 export {
   GenkitAPIError,
-  RequestDetails,
-  RetryConfig,
   DEFAULT_RETRY_CONFIG
+} from './genkit.errors';
+
+export type {
+  RequestDetails,
+  RetryConfig
 } from './genkit.errors';
 
 // Neo4j database errors

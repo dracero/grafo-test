@@ -75,8 +75,8 @@ export class GeminiLlm extends BaseLlm {
     }
 
     let attempt = 0;
-    const maxRetries = 5;
-    let delay = 2500; // Start with 2.5s delay
+    const maxRetries = 7;
+    let delay = 5000; // Start with 5s delay (503 high-demand spikes can last 10-30s)
 
     while (attempt < maxRetries) {
       try {
@@ -89,16 +89,18 @@ export class GeminiLlm extends BaseLlm {
           signal: abortSignal
         });
 
-        if (response.status === 429) {
+        // Retry on transient errors: 429 (rate limit) and 503 (service unavailable / high demand)
+        if (response.status === 429 || response.status === 503) {
           attempt++;
+          const errLabel = response.status === 429 ? 'Rate limit (429)' : 'Service unavailable (503)';
           if (attempt >= maxRetries) {
             yield {
-              errorCode: '429',
-              errorMessage: 'Gemini API rate limit exceeded after maximum retry attempts.'
+              errorCode: String(response.status),
+              errorMessage: `Gemini API ${errLabel} after ${maxRetries} retry attempts.`
             };
             return;
           }
-          logger.warn('GeminiLlm', `Rate limit (429) received from Gemini. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
+          logger.warn('GeminiLlm', `${errLabel} received from Gemini. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           delay *= 2; // exponential backoff
           continue;

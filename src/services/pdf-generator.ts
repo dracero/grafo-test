@@ -1,20 +1,175 @@
-import PDFDocument from 'pdfkit';
+/**
+ * PDF Generator — Format-Preserving Correction Strategy
+ *
+ * Instead of generating a PDF from scratch (which loses the original format),
+ * this module:
+ *   1. Copies ALL pages from the original PDF verbatim (preserving headers,
+ *      footers, logos, fonts, layout — everything).
+ *   2. Appends an "ANEXO DE CORRECCIONES" section using PDFKit that lists
+ *      each correction with section reference, original text, and corrected text.
+ *
+ * This ensures the output has full legal validity because the original document
+ * is embedded exactly as-is, and corrections are clearly documented.
+ */
+
+import { PDFDocument } from 'pdf-lib';
+import PDFDocumentKit from 'pdfkit';
 import { createLogger } from './logger';
 
 const logger = createLogger();
 
+/**
+ * A single structured correction produced by the ProgramFixerAgent.
+ */
+export interface StructuredCorrection {
+  /** Section or location in the original document */
+  section: string;
+  /** What type of change: 'agregar' | 'modificar' | 'enriquecer' */
+  action: string;
+  /** Brief description of why this correction is needed */
+  justification: string;
+  /** The corrected/added text to incorporate */
+  correctedText: string;
+  /** Priority: 'alta' | 'media' | 'baja' */
+  priority: string;
+}
+
+/**
+ * Parses the ProgramFixerAgent output (JSON array of corrections) into
+ * structured objects. Handles markdown fences and partial/truncated JSON.
+ */
+export function parseCorrections(rawText: string): StructuredCorrection[] {
+  // Strip markdown code fences
+  let cleaned = rawText
+    .replace(/^```(?:json)?\n?/m, '')
+    .replace(/```\s*$/m, '')
+    .trim();
+
+  // Try full parse first
+  try {
+    const parsed = JSON.parse(cleaned);
+    const items = parsed?.corrections ?? parsed;
+    if (Array.isArray(items)) {
+      return items.filter(isValidCorrection).map(normalizeCorrection);
+    }
+  } catch { /* fall through */ }
+
+  // Fallback: extract complete JSON objects from the text
+  const objects: any[] = [];
+  let depth = 0;
+  let start = -1;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try {
+          const obj = JSON.parse(cleaned.substring(start, i + 1));
+          objects.push(obj);
+        } catch { /* skip malformed */ }
+        start = -1;
+      }
+    }
+  }
+
+  return objects.filter(isValidCorrection).map(normalizeCorrection);
+}
+
+function isValidCorrection(obj: any): boolean {
+  return obj && typeof obj.section === 'string' && (typeof obj.correctedText === 'string' || typeof obj.corrected_text === 'string' || typeof obj.texto_corregido === 'string');
+}
+
+function normalizeCorrection(obj: any): StructuredCorrection {
+  return {
+    section: String(obj.section ?? obj.seccion ?? ''),
+    action: String(obj.action ?? obj.accion ?? 'modificar'),
+    justification: String(obj.justification ?? obj.justificacion ?? obj.reason ?? ''),
+    correctedText: String(obj.correctedText ?? obj.corrected_text ?? obj.texto_corregido ?? ''),
+    priority: String(obj.priority ?? obj.prioridad ?? 'media'),
+  };
+}
+
+/**
+ * Generates a corrected PDF by copying the original PDF pages verbatim
+ * and appending a structured "ANEXO DE CORRECCIONES" section.
+ *
+ * @param programName    Display name for the program
+ * @param originalPdf    Buffer of the original PDF (uploaded by user)
+ * @param corrections    Structured corrections from ProgramFixerAgent
+ * @param correctedText  Raw text from the agent (for reference)
+ * @returns              Buffer of the combined PDF
+ */
 export async function generateCorrectedProgramPDF(
   programName: string,
-  text: string
+  originalPdf: Buffer | null,
+  corrections: StructuredCorrection[],
+  correctedText: string
 ): Promise<Buffer> {
-  logger.info('PDFGenerator', `Generating high-fidelity PDF for program: ${programName}`);
+  logger.info('PDFGenerator', `Generating format-preserving corrected PDF for: ${programName}`);
 
+  // ── Step 1: Create the appendix pages with PDFKit ────────────────────
+  const appendixBuffer = await generateAppendixPDF(programName, corrections, correctedText);
+
+  if (!originalPdf || originalPdf.length === 0) {
+    logger.warn('PDFGenerator', 'No original PDF available — returning appendix-only PDF');
+    return appendixBuffer;
+  }
+
+  // ── Step 2: Merge original + appendix using pdf-lib ──────────────────
+  try {
+    const mergedPdf = await PDFDocument.create();
+
+    // Copy all pages from the original PDF
+    const originalDoc = await PDFDocument.load(originalPdf, { ignoreEncryption: true });
+    const originalPages = await mergedPdf.copyPages(originalDoc, originalDoc.getPageIndices());
+    for (const page of originalPages) {
+      mergedPdf.addPage(page);
+    }
+
+    logger.info('PDFGenerator', `Copied ${originalPages.length} pages from original PDF`);
+
+    // Copy all pages from the appendix PDF
+    const appendixDoc = await PDFDocument.load(appendixBuffer);
+    const appendixPages = await mergedPdf.copyPages(appendixDoc, appendixDoc.getPageIndices());
+    for (const page of appendixPages) {
+      mergedPdf.addPage(page);
+    }
+
+    logger.info('PDFGenerator', `Added ${appendixPages.length} appendix pages`);
+
+    // Set metadata
+    mergedPdf.setTitle(`${programName} — Programa Corregido`);
+    mergedPdf.setSubject('Documento corregido bajo conformidad normativa');
+    mergedPdf.setCreator('PDF Knowledge Graph — Sistema de Corrección Curricular');
+    mergedPdf.setProducer('pdf-lib + PDFKit');
+    mergedPdf.setCreationDate(new Date());
+
+    const mergedBytes = await mergedPdf.save();
+    return Buffer.from(mergedBytes);
+  } catch (mergeError: any) {
+    logger.error('PDFGenerator', 'Error merging PDFs, returning appendix only', mergeError);
+    return appendixBuffer;
+  }
+}
+
+/**
+ * Generates the appendix PDF with structured corrections using PDFKit.
+ */
+async function generateAppendixPDF(
+  programName: string,
+  corrections: StructuredCorrection[],
+  correctedText: string
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     try {
       const chunks: Buffer[] = [];
-      const doc = new PDFDocument({
+      const doc = new PDFDocumentKit({
         size: 'A4',
-        margin: 54, // 0.75 in (54 pt)
+        margin: 54,
         bufferPages: true
       });
 
@@ -22,136 +177,257 @@ export async function generateCorrectedProgramPDF(
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', (err) => reject(err));
 
-      // Page width & height calculations
       const margin = 54;
       const pageWidth = doc.page.width;
       const pageHeight = doc.page.height;
       const writeWidth = pageWidth - margin * 2;
 
-      // Split text into lines
-      const lines = text.split('\n');
-      let i = 0;
+      const title = programName.replace(/\.pdf$/i, '').replace(/_/g, ' ');
 
-      // Document title (usually the first few lines contain the title, or we can format it dynamically)
-      let title = programName.replace(/\.pdf$/i, '').replace(/_/g, ' ');
+      // ── Separator / Cover page for the appendix ──────────────────────
+      // Decorative top bar
+      doc.rect(0, 0, pageWidth, 8).fill('#1e40af');
+
+      doc.moveDown(4);
+
+      // Title block
       doc.fillColor('#1e293b')
          .font('Helvetica-Bold')
-         .fontSize(20)
-         .text(title.toUpperCase(), { align: 'center' });
-      doc.moveDown(1.5);
+         .fontSize(22)
+         .text('ANEXO DE CORRECCIONES', { align: 'center' });
 
-      while (i < lines.length) {
-        const line = lines[i].trim();
+      doc.moveDown(0.8);
 
-        if (!line) {
-          i++;
-          continue;
-        }
+      doc.fillColor('#475569')
+         .font('Helvetica')
+         .fontSize(12)
+         .text('Propuestas de Adecuación Curricular', { align: 'center' });
 
-        // 1. Detect Markdown Table
-        if (line.startsWith('|') && i + 1 < lines.length && lines[i + 1].trim().includes('|-')) {
-          const tableRows: string[][] = [];
-          
-          // Collect all contiguous table rows
-          while (i < lines.length && lines[i].trim().startsWith('|')) {
-            const rawRow = lines[i].trim();
-            // Skip separator line like |---|---|
-            if (!rawRow.includes('|-')) {
-              const cells = rawRow
-                .split('|')
-                .map(c => c.trim())
-                .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
-              tableRows.push(cells);
-            }
-            i++;
+      doc.moveDown(2);
+
+      // Info box
+      const boxY = doc.y;
+      doc.rect(margin, boxY, writeWidth, 80)
+         .lineWidth(1)
+         .strokeColor('#cbd5e1')
+         .fillAndStroke('#f8fafc', '#cbd5e1');
+
+      doc.fillColor('#334155')
+         .font('Helvetica-Bold')
+         .fontSize(10)
+         .text('Programa:', margin + 15, boxY + 12, { continued: true })
+         .font('Helvetica')
+         .text(`  ${title}`);
+
+      doc.fillColor('#334155')
+         .font('Helvetica-Bold')
+         .fontSize(10)
+         .text('Fecha:', margin + 15, boxY + 30, { continued: true })
+         .font('Helvetica')
+         .text(`  ${new Date().toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' })}`);
+
+      doc.fillColor('#334155')
+         .font('Helvetica-Bold')
+         .fontSize(10)
+         .text('Correcciones:', margin + 15, boxY + 48, { continued: true })
+         .font('Helvetica')
+         .text(`  ${corrections.length} modificaciones propuestas`);
+
+      doc.y = boxY + 95;
+
+      doc.moveDown(1);
+
+      doc.fillColor('#64748b')
+         .font('Helvetica')
+         .fontSize(9)
+         .text(
+           'NOTA: Las páginas anteriores corresponden al documento original del programa sin modificaciones. ' +
+           'Las correcciones propuestas a continuación deben integrarse en las secciones indicadas para alcanzar ' +
+           'la conformidad con los requisitos normativos.',
+           { align: 'justify', width: writeWidth }
+         );
+
+      doc.moveDown(2);
+
+      // Divider line
+      doc.strokeColor('#e2e8f0')
+         .lineWidth(1)
+         .moveTo(margin, doc.y)
+         .lineTo(pageWidth - margin, doc.y)
+         .stroke();
+
+      doc.moveDown(1);
+
+      // ── Render each correction ───────────────────────────────────────
+      if (corrections.length > 0) {
+        for (let idx = 0; idx < corrections.length; idx++) {
+          const c = corrections[idx];
+
+          // Check if we need a new page (leave room for at least the header)
+          if (doc.y > pageHeight - 150) {
+            doc.addPage();
           }
 
-          if (tableRows.length > 0) {
-            renderTable(doc, tableRows, writeWidth);
-            doc.moveDown(1);
-          }
-          continue;
-        }
+          // Priority color badge
+          const priorityColors: Record<string, string> = {
+            alta: '#dc2626',
+            media: '#f59e0b',
+            baja: '#22c55e',
+          };
+          const pColor = priorityColors[c.priority.toLowerCase()] || '#6b7280';
 
-        // 2. Detect Main Section (e.g. "1. DATOS GENERALES" or "I. OBJETIVOS")
-        const isMainSection = /^(?:[0-9]+|[A-Z]+)\.\s+[A-ZÁÉÍÓÚÑ\s\(\),]+$/i.test(line);
-        if (isMainSection) {
-          doc.moveDown(1);
-          // Left-side colored bar design
-          const currentY = doc.y;
-          doc.rect(margin, currentY, 4, 18).fill('#4f46e5');
-          
+          // Correction number + section header
+          const headerY = doc.y;
+          doc.rect(margin, headerY, 4, 16).fill('#1e40af');
+
           doc.fillColor('#1e293b')
              .font('Helvetica-Bold')
-             .fontSize(13)
-             .text(line, margin + 12, currentY + 2);
-          
-          doc.moveDown(1.2);
-          i++;
-          continue;
-        }
-
-        // 3. Detect Subsection (e.g. "1.1 Cátedra" or "A. Objetivos específicos")
-        const isSubsection = /^(?:[0-9]+\.[0-9]+|[A-Z]\.)\s+.+$/i.test(line);
-        if (isSubsection) {
-          doc.moveDown(0.5);
-          doc.fillColor('#334155')
-             .font('Helvetica-Bold')
              .fontSize(11)
-             .text(line, { width: writeWidth });
-          doc.moveDown(0.6);
-          i++;
-          continue;
-        }
+             .text(`Corrección ${idx + 1}: ${c.section}`, margin + 12, headerY + 2, { width: writeWidth - 100 });
 
-        // 4. Detect List Item (e.g. "- Tema 1" or "• Tema 2")
-        const isListItem = /^(?:[\-\*•]|\d+[\)\.])\s+(.+)$/.exec(line);
-        if (isListItem) {
-          const content = isListItem[1];
-          doc.fillColor('#475569')
+          // Priority badge
+          const badgeText = c.priority.toUpperCase();
+          const badgeWidth = doc.widthOfString(badgeText) + 12;
+          doc.roundedRect(pageWidth - margin - badgeWidth - 5, headerY, badgeWidth, 16, 3)
+             .fill(pColor);
+          doc.fillColor('#ffffff')
+             .font('Helvetica-Bold')
+             .fontSize(8)
+             .text(badgeText, pageWidth - margin - badgeWidth, headerY + 4, { width: badgeWidth, align: 'center' });
+
+          doc.y = headerY + 22;
+
+          // Action type
+          doc.fillColor('#6b7280')
+             .font('Helvetica-Bold')
+             .fontSize(9)
+             .text(`Acción: `, margin + 12, doc.y, { continued: true })
              .font('Helvetica')
-             .fontSize(10)
-             .text('•', margin + 15, doc.y, { continued: true })
-             .text('  ' + content, margin + 25, doc.y, {
-               width: writeWidth - 25,
-               align: 'justify',
-               lineGap: 3
-             });
-          doc.moveDown(0.4);
-          i++;
-          continue;
-        }
+             .fillColor('#475569')
+             .text(c.action);
 
-        // 5. Default Paragraph
+          doc.moveDown(0.3);
+
+          // Justification
+          if (c.justification) {
+            doc.fillColor('#6b7280')
+               .font('Helvetica-Bold')
+               .fontSize(9)
+               .text('Justificación: ', margin + 12, doc.y, { continued: true })
+               .font('Helvetica')
+               .fillColor('#475569')
+               .text(c.justification, { width: writeWidth - 12 });
+
+            doc.moveDown(0.3);
+          }
+
+          // Corrected text box
+          const textBoxY = doc.y;
+          const textHeight = doc.heightOfString(c.correctedText, { width: writeWidth - 30 });
+          const boxHeight = textHeight + 16;
+
+          // Check page overflow for the text box
+          if (textBoxY + boxHeight > pageHeight - 60) {
+            doc.addPage();
+          }
+
+          const finalBoxY = doc.y;
+          doc.rect(margin + 8, finalBoxY, writeWidth - 8, boxHeight)
+             .lineWidth(0.5)
+             .fillAndStroke('#f0fdf4', '#bbf7d0');
+
+          doc.fillColor('#166534')
+             .font('Helvetica')
+             .fontSize(9)
+             .text(c.correctedText, margin + 20, finalBoxY + 8, {
+               width: writeWidth - 30,
+               align: 'justify',
+               lineGap: 2
+             });
+
+          doc.y = finalBoxY + boxHeight + 12;
+
+          // Separator between corrections
+          if (idx < corrections.length - 1) {
+            doc.strokeColor('#e2e8f0')
+               .lineWidth(0.5)
+               .moveTo(margin + 20, doc.y)
+               .lineTo(pageWidth - margin - 20, doc.y)
+               .stroke();
+            doc.moveDown(0.8);
+          }
+        }
+      } else {
+        // No structured corrections — render the raw corrected text
         doc.fillColor('#475569')
            .font('Helvetica')
-           .fontSize(10)
-           .text(line, {
-             width: writeWidth,
-             align: 'justify',
-             lineGap: 3
-           });
-        doc.moveDown(0.6);
-        i++;
+           .fontSize(10);
+
+        const lines = correctedText.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          if (doc.y > pageHeight - 80) {
+            doc.addPage();
+          }
+
+          // Basic markdown-like rendering for fallback
+          if (trimmed.startsWith('# ')) {
+            doc.moveDown(0.8);
+            const currentY = doc.y;
+            doc.rect(margin, currentY, 4, 16).fill('#1e40af');
+            doc.fillColor('#1e293b')
+               .font('Helvetica-Bold')
+               .fontSize(12)
+               .text(trimmed.substring(2), margin + 12, currentY + 1, { width: writeWidth - 12 });
+            doc.moveDown(0.6);
+          } else if (trimmed.startsWith('## ')) {
+            doc.moveDown(0.4);
+            doc.fillColor('#334155')
+               .font('Helvetica-Bold')
+               .fontSize(10)
+               .text(trimmed.substring(3), { width: writeWidth });
+            doc.moveDown(0.4);
+          } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+            doc.fillColor('#475569')
+               .font('Helvetica')
+               .fontSize(9)
+               .text('•  ' + trimmed.substring(2), margin + 15, doc.y, {
+                 width: writeWidth - 15,
+                 align: 'justify',
+                 lineGap: 2
+               });
+            doc.moveDown(0.3);
+          } else {
+            doc.fillColor('#475569')
+               .font('Helvetica')
+               .fontSize(9)
+               .text(trimmed, {
+                 width: writeWidth,
+                 align: 'justify',
+                 lineGap: 2
+               });
+            doc.moveDown(0.4);
+          }
+        }
       }
 
-      // Add Headers and Footers (Dynamic two-pass for total page count)
+      // ── Headers and Footers ──────────────────────────────────────────
       const pages = doc.bufferedPageRange();
       for (let j = 0; j < pages.count; j++) {
         doc.switchToPage(j);
 
-        // Temporarily change bottom margin to 0 to prevent footer from triggering auto-page breaks
-        const oldBottomMargin = doc.page.margins.bottom;
+        const oldBottom = doc.page.margins.bottom;
         doc.page.margins.bottom = 0;
 
-        // Header (Skip first page)
+        // Header
         if (j > 0) {
           doc.fontSize(8)
              .fillColor('#94a3b8')
              .font('Helvetica')
-             .text(`PROGRAMA DE ESTUDIOS — ${title.toUpperCase()}`, margin, 30, { align: 'left' });
-          
-          // Header line
+             .text(`ANEXO DE CORRECCIONES — ${title.toUpperCase()}`, margin, 30, { align: 'left' });
+
           doc.strokeColor('#e2e8f0')
              .lineWidth(0.5)
              .moveTo(margin, 42)
@@ -159,129 +435,26 @@ export async function generateCorrectedProgramPDF(
              .stroke();
         }
 
-        // Footer line
+        // Footer
         doc.strokeColor('#e2e8f0')
            .lineWidth(0.5)
            .moveTo(margin, pageHeight - 45)
            .lineTo(pageWidth - margin, pageHeight - 45)
            .stroke();
 
-        // Footer Text
         doc.fontSize(8)
            .fillColor('#94a3b8')
            .font('Helvetica')
-           .text('Documento oficial corregido bajo conformidad normativa.', margin, pageHeight - 36, { align: 'left', continued: true })
-           .text(`Página ${j + 1} de ${pages.count}`, pageWidth - margin - 100, pageHeight - 36, {
-             width: 100,
-             align: 'right'
-           });
+           .text('Documento generado por el Sistema de Corrección Curricular.', margin, pageHeight - 36, { align: 'left', continued: true })
+           .text(`Pág. ${j + 1} de ${pages.count}`, pageWidth - margin - 80, pageHeight - 36, { width: 80, align: 'right' });
 
-        // Restore bottom margin
-        doc.page.margins.bottom = oldBottomMargin;
+        doc.page.margins.bottom = oldBottom;
       }
 
       doc.end();
     } catch (error) {
-      logger.error('PDFGenerator', 'Error in PDF generation', error as Error);
+      logger.error('PDFGenerator', 'Error generating appendix PDF', error as Error);
       reject(error);
     }
   });
-}
-
-function renderTable(doc: PDFKit.PDFDocument, rows: string[][], writeWidth: number) {
-  const colCount = rows[0].length;
-  const colWidth = writeWidth / colCount;
-
-  const startX = doc.x;
-  let currentY = doc.y;
-
-  // Render header
-  const headers = rows[0];
-  let maxHeaderHeight = 0;
-
-  // Calculate cell height
-  headers.forEach((text) => {
-    const height = doc.heightOfString(text, { width: colWidth - 10 });
-    if (height > maxHeaderHeight) maxHeaderHeight = height;
-  });
-  maxHeaderHeight += 12; // cell padding
-
-  // Draw header backgrounds
-  doc.rect(startX, currentY, writeWidth, maxHeaderHeight).fill('#f1f5f9');
-
-  // Draw header texts
-  headers.forEach((text, idx) => {
-    doc.fillColor('#1e293b')
-       .font('Helvetica-Bold')
-       .fontSize(9)
-       .text(text, startX + idx * colWidth + 5, currentY + 6, {
-         width: colWidth - 10,
-         align: 'left'
-       });
-  });
-
-  // Draw borders
-  doc.strokeColor('#cbd5e1')
-     .lineWidth(0.5)
-     .rect(startX, currentY, writeWidth, maxHeaderHeight)
-     .stroke();
-
-  for (let c = 1; c < colCount; c++) {
-    doc.moveTo(startX + c * colWidth, currentY)
-       .lineTo(startX + c * colWidth, currentY + maxHeaderHeight)
-       .stroke();
-  }
-
-  currentY += maxHeaderHeight;
-
-  // Render data rows
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    let maxRowHeight = 0;
-
-    row.forEach((text) => {
-      const height = doc.heightOfString(text, { width: colWidth - 10 });
-      if (height > maxRowHeight) maxRowHeight = height;
-    });
-    maxRowHeight += 10; // cell padding
-
-    // Page overflow safety
-    if (currentY + maxRowHeight > doc.page.height - 70) {
-      doc.addPage();
-      currentY = doc.y;
-      
-      // Draw grid top border for the new page
-      doc.strokeColor('#cbd5e1')
-         .lineWidth(0.5)
-         .moveTo(startX, currentY)
-         .lineTo(startX + writeWidth, currentY)
-         .stroke();
-    }
-
-    row.forEach((text, idx) => {
-      doc.fillColor('#334155')
-         .font('Helvetica')
-         .fontSize(8.5)
-         .text(text, startX + idx * colWidth + 5, currentY + 5, {
-           width: colWidth - 10,
-           align: 'left'
-         });
-    });
-
-    // Draw borders
-    doc.strokeColor('#cbd5e1')
-       .lineWidth(0.5)
-       .rect(startX, currentY, writeWidth, maxRowHeight)
-       .stroke();
-
-    for (let c = 1; c < colCount; c++) {
-      doc.moveTo(startX + c * colWidth, currentY)
-         .lineTo(startX + c * colWidth, currentY + maxRowHeight)
-         .stroke();
-    }
-
-    currentY += maxRowHeight;
-  }
-
-  doc.y = currentY + 5;
 }

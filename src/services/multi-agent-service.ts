@@ -6,7 +6,7 @@ import { createLogger } from './logger';
 const logger = createLogger();
 
 export interface AgentStepUpdate {
-  step: 'NormativeOntologyAgent' | 'ProgramOntologyAgent' | 'ComplianceGapsAgent' | 'ProgramFixerAgent';
+  step: 'NormativeOntologyAgent' | 'ProgramOntologyAgent' | 'ComplianceGapsAgent' | 'StructureAnalyzerAgent' | 'ProgramFixerAgent';
   content: string;
   isFinal: boolean;
 }
@@ -60,6 +60,25 @@ export async function* runCorrectionPipeline(
     }
   });
 
+  const structureAnalyzerAgent = new LlmAgent({
+    name: 'StructureAnalyzerAgent',
+    description: 'Analyzes the original PDF structure and returns a JSON representation.',
+    model: gemini,
+    outputKey: 'app:original_structure',
+    instruction: async (context) => {
+      const progDoc = context.state.get<string>('app:program_doc');
+      logger.info('StructureAnalyzerAgent', `Analyzing original structure for: ${progDoc}`);
+      
+      const originalText = await graphBuilder.getProgramText(progDoc || '');
+      return `Eres el agente especialista en análisis de estructura de documentos. Tu objetivo es leer el texto del programa de materia "${progDoc}" y extraer su estructura (secciones, subsecciones, tablas, y estilo de viñetas).
+      
+      Texto del programa:
+      ${originalText}
+      
+      Devuelve ÚNICAMENTE un JSON válido que describa esta estructura (ej. un array de objetos detallando jerarquía de títulos y elementos).`;
+    }
+  });
+
   const complianceAgent = new LlmAgent({
     name: 'ComplianceGapsAgent',
     description: 'Reads compliance gaps (partial/missing items) from Neo4j.',
@@ -105,45 +124,53 @@ export async function* runCorrectionPipeline(
       
       // Retrieve intermediate analyses from state
       const normativeAnalysis = context.state.get<string>('app:normative_analysis') || '';
-      const programAnalysis = context.state.get<string>('app:program_analysis') || '';
       const complianceAnalysis = context.state.get<string>('app:compliance_analysis') || '';
+      const originalStructure = context.state.get<string>('app:original_structure') || '';
       
-      return `Eres el agente especialista en adecuación curricular de planes de estudio universitarios. Tu tarea es generar un informe ejecutivo en español que resuma los requisitos faltantes y proponga detalladamente la forma de corregir los requisitos parcialmente cumplidos en el plan de estudios, sin transcribir todo el documento original.
+      return `Eres el agente especialista en adecuación curricular de planes de estudio universitarios. Tu tarea es generar un listado ESTRUCTURADO de correcciones que deben aplicarse al programa de estudios original para cubrir las brechas normativas detectadas.
+
+      IMPORTANTE: NO reescribas el documento completo. El documento original se preservará tal cual está. Solo necesitás listar las correcciones puntuales.
       
       INFORMACIÓN DEL PIPELINE:
       - Análisis de Requisitos Normativos:
       ${normativeAnalysis}
       
-      - Estructura del Programa Original:
-      ${programAnalysis}
-      
       - Brechas de Cumplimiento y Sugerencias de Corrección:
       ${complianceAnalysis}
       
-      INSTRUCCIONES DE FORMATO Y ESTRUCTURA:
-      Debes estructurar tu informe de la siguiente manera:
+      - Estructura Original Detectada (JSON):
+      ${originalStructure}
       
-      1. RESUMEN DE REQUISITOS FALTANTES
-      Detalla claramente los requisitos normativos que están completamente ausentes en el programa original. Utiliza una lista con viñetas.
+      TEXTO ORIGINAL DEL PROGRAMA (referencia):
+      ${originalText}
       
-      2. PROPUESTA DE CORRECCIÓN PARA REQUISITOS PARCIALES
-      Explica de manera detallada y estructurada cómo enriquecer o modificar el programa de estudios actual para que los requisitos parcialmente cubiertos alcancen un cumplimiento del 100%. Sigue las directivas de integración transversal indicadas abajo.
+      INSTRUCCIONES DE FORMATO DE SALIDA:
+      Devolvé ÚNICAMENTE un JSON válido con la siguiente estructura. No incluyas markdown, solo el JSON puro:
+
+      {"corrections": [
+        {
+          "section": "Nombre exacto de la sección del documento original donde aplicar la corrección (ej: 'Objetivos', 'Contenidos Mínimos', 'Metodología de Enseñanza')",
+          "action": "agregar | modificar | enriquecer",
+          "justification": "Explicación breve de por qué es necesaria esta corrección según la normativa",
+          "correctedText": "El texto completo que debe incorporarse o reemplazar al existente en esa sección",
+          "priority": "alta | media | baja"
+        }
+      ]}
       
-      DIRECTIVAS DE INTEGRACIÓN PEDAGÓGICA (Crucial):
-      - Evita proponer nuevas asignaturas obligatorias. En su lugar, promueve la integración gradual y transversal de competencias transversales en asignaturas y proyectos existentes a lo largo del trayecto formativo.
-      - Recomienda explícitamente enriquecer los espacios de integración curricular (proyectos de primer año, sustentabilidad/gestión a mitad de carrera y proyectos finales de graduación) para incorporar la práctica y evaluación de estas competencias de forma contextualizada.
+      DIRECTIVAS DE INTEGRACIÓN PEDAGÓGICA:
+      - Integrá transversalmente las competencias faltantes en asignaturas y proyectos existentes.
+      - Evitá proponer nuevas asignaturas obligatorias.
+      - Enriquecé los espacios de integración curricular existentes (proyectos integradores, trabajos finales).
+      - Cada corrección debe ser autónoma y aplicable directamente sobre el documento original.
       
-      El resultado debe ser únicamente el informe estructurado con estas dos secciones principales en un español profesional, sin agregar introducciones redundantes ni notas aclaratorias fuera de estas secciones.
-      
-      TEXTO ORIGINAL DEL PROGRAMA (Como referencia del contexto):
-      ${originalText}`;
+      Generá únicamente el JSON de correcciones.`;
     }
   });
 
   // 3. Chain agents sequentially
   const pipeline = new SequentialAgent({
     name: 'CorrectionPipeline',
-    subAgents: [normativeAgent, programAgent, complianceAgent, fixerAgent]
+    subAgents: [normativeAgent, programAgent, structureAnalyzerAgent, complianceAgent, fixerAgent]
   });
 
   // 4. Run pipeline

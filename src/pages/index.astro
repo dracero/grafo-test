@@ -1,3 +1,9 @@
+---
+/**
+ * Main Graph Explorer page
+ * Converted from public/index.html to Astro component
+ */
+---
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -7,11 +13,11 @@
   <title>PDF Knowledge Graph Explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-  <link rel="stylesheet" href="style.css">
+  <script src="https://d3js.org/d3.v7.min.js" is:inline></script>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- ─── Loading Overlay ─── -->
+  <!-- Loading Overlay -->
   <div id="loading-overlay" class="loading-overlay">
     <div class="loading-content">
       <div class="loading-spinner">
@@ -24,7 +30,7 @@
     </div>
   </div>
 
-  <!-- ─── Top Bar ─── -->
+  <!-- Top Bar -->
   <header id="top-bar" class="top-bar">
     <div class="top-bar-left">
       <div class="logo">
@@ -60,7 +66,7 @@
       </div>
     </div>
     <div class="top-bar-right">
-      <a href="/compare.html" class="btn btn-primary" style="text-decoration:none" title="Comparar normativa vs programa">
+      <a href="/compare" class="btn btn-primary" style="text-decoration:none" title="Comparar normativa vs programa">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5v-3zm8 0A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5v-3zm-8 8A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5v-3z"/></svg>
         Comparar
       </a>
@@ -74,17 +80,14 @@
     </div>
   </header>
 
-  <!-- ─── Sidebar ─── -->
+  <!-- Sidebar -->
   <aside id="sidebar" class="sidebar">
-    <!-- Filters -->
     <div class="sidebar-section">
       <h3 class="sidebar-title">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.5h13l-5 6v5l-3 2v-7l-5-6z"/></svg>
         Filtros
       </h3>
-      <div class="filter-group" id="type-filters">
-        <!-- Dynamically filled -->
-      </div>
+      <div class="filter-group" id="type-filters"></div>
       <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light);">
         <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-secondary); cursor:pointer;">
           <input type="checkbox" id="filter-concordant" style="width:16px; height:16px; accent-color:var(--accent-emerald);">
@@ -92,30 +95,20 @@
         </label>
       </div>
     </div>
-
-    <!-- Legend -->
     <div class="sidebar-section">
       <h3 class="sidebar-title">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2zm9 0a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V2zM0 11a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-3z"/></svg>
         Leyenda
       </h3>
-      <div class="legend" id="legend">
-        <!-- Dynamically filled -->
-      </div>
+      <div class="legend" id="legend"></div>
     </div>
-
-    <!-- Documents -->
     <div class="sidebar-section">
       <h3 class="sidebar-title">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5L9.5 0H4zm5.5 1.5L13 5h-2.5a1 1 0 0 1-1-1V1.5zM4.5 8a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5z"/></svg>
         Documentos
       </h3>
-      <div class="doc-list" id="doc-list">
-        <!-- Dynamically filled -->
-      </div>
+      <div class="doc-list" id="doc-list"></div>
     </div>
-
-    <!-- Search -->
     <div class="sidebar-section">
       <h3 class="sidebar-title">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 0a6.5 6.5 0 1 0 4.13 11.55l3.16 3.16a1 1 0 0 0 1.42-1.42l-3.16-3.16A6.5 6.5 0 0 0 6.5 0zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z"/></svg>
@@ -129,16 +122,14 @@
     </div>
   </aside>
 
-  <!-- ─── Main Graph Canvas ─── -->
+  <!-- Main Graph Canvas -->
   <main id="graph-container" class="graph-container">
     <svg id="graph-svg"></svg>
-    <!-- Zoom Controls -->
     <div class="zoom-controls">
       <button id="zoom-in" class="zoom-btn" title="Acercar">+</button>
       <button id="zoom-reset" class="zoom-btn" title="Restablecer">⊙</button>
       <button id="zoom-out" class="zoom-btn" title="Alejar">−</button>
     </div>
-    <!-- Empty State -->
     <div id="empty-state" class="empty-state hidden">
       <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
         <circle cx="40" cy="40" r="35" stroke="#4B5563" stroke-width="2" stroke-dasharray="6 4"/>
@@ -153,20 +144,18 @@
     </div>
   </main>
 
-  <!-- ─── Node Detail Panel ─── -->
+  <!-- Node Detail Panel -->
   <div id="node-panel" class="node-panel hidden">
     <div class="node-panel-header">
       <h3 id="node-panel-title">Detalles del Nodo</h3>
       <button id="node-panel-close" class="btn-icon" title="Cerrar">✕</button>
     </div>
-    <div class="node-panel-body" id="node-panel-body">
-      <!-- Dynamically filled -->
-    </div>
+    <div class="node-panel-body" id="node-panel-body"></div>
   </div>
 
-  <!-- ─── Toast Notification ─── -->
+  <!-- Toast Notification -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js"></script>
+  <script is:inline src="/app.js"></script>
 </body>
 </html>

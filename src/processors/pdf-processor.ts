@@ -7,7 +7,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-const pdfParse = require('pdf-parse');
+import pdfParse from 'pdf-parse';
 import {
   PDFProcessor,
   ExtractionResult,

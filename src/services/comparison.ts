@@ -389,25 +389,69 @@ ${programList}`;
       const rawText = response.text ?? '';
       const rawResults = parseComparisonResponse(rawText);
 
-      const batchResults = rawResults
-        .filter((r: any) => r.itemId && r.status)
-        .map((r: any) => {
-          const item = batch.find((i) => i.id === r.itemId) || batch[0];
-          return {
-            item,
-            status: r.status as 'covered' | 'partial' | 'missing',
-            confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
-            evidence: String(r.evidence ?? ''),
-            suggestion: String(r.suggestion ?? ''),
-          };
-        });
+      // Diagnostic: log first 500 chars of model response + parsed field names
+      if (rawResults.length > 0) {
+        const sampleKeys = Object.keys(rawResults[0]).join(', ');
+        logger.info('Comparison', `Lote ${Math.floor(i / BATCH_SIZE) + 1}: primer resultado tiene campos: [${sampleKeys}]. Primer itemId: "${rawResults[0].itemId ?? rawResults[0].item_id ?? rawResults[0].id ?? 'N/A'}"`);
+      } else {
+        logger.warn('Comparison', `Lote ${Math.floor(i / BATCH_SIZE) + 1}: parseComparisonResponse devolvió 0 resultados. Primeros 500 chars del raw: ${rawText.substring(0, 500)}`);
+      }
 
-      // Asegurar que todos los elementos del lote tengan un resultado
+      logger.info(
+        'Comparison',
+        `Lote ${Math.floor(i / BATCH_SIZE) + 1}: modelo devolvió ${rawResults.length} resultados parseados para ${batch.length} requisitos`
+      );
+
+      // Build a normalized lookup map: normalize IDs for case-insensitive,
+      // whitespace-insensitive, and separator-insensitive matching.
+      const normalizeId = (id: string) => id.trim().toLowerCase().replace(/[\s_]+/g, '-');
+
+      const batchMap = new Map<string, OntologyItem>();
       for (const item of batch) {
-        const found = batchResults.find((br) => br.item.id === item.id);
+        batchMap.set(normalizeId(item.id), item);
+      }
+
+      // Map model results to batch items using normalized ID matching
+      const matchedResults = new Map<string, ComparisonResult>();
+
+      for (const r of rawResults) {
+        // The model might use different field names for the ID
+        const rawId = r.itemId ?? r.item_id ?? r.id ?? r.reqId ?? r.req_id ?? '';
+        const status = r.status;
+        if (!rawId || !status) continue;
+
+        const normId = normalizeId(rawId);
+        const item = batchMap.get(normId);
+
+        if (!item) {
+          logger.warn(
+            'Comparison',
+            `ID del modelo "${rawId}" (normalizado: "${normId}") no coincide con ningún requisito del lote. IDs esperados: ${batch.slice(0, 5).map(b => b.id).join(', ')}...`
+          );
+          continue;
+        }
+
+        matchedResults.set(item.id, {
+          item,
+          status: r.status as 'covered' | 'partial' | 'missing',
+          confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
+          evidence: String(r.evidence ?? ''),
+          suggestion: String(r.suggestion ?? ''),
+        });
+      }
+
+      logger.info(
+        'Comparison',
+        `Lote ${Math.floor(i / BATCH_SIZE) + 1}: ${matchedResults.size}/${batch.length} requisitos mapeados exitosamente`
+      );
+
+      // Ensure every batch item has a result
+      for (const item of batch) {
+        const found = matchedResults.get(item.id);
         if (found) {
           allResults.push(found);
         } else {
+          logger.warn('Comparison', `Sin resultado del modelo para: ${item.id} (${item.requirement})`);
           allResults.push({
             item,
             status: 'missing',
