@@ -13,7 +13,8 @@
     "test:coverage": "jest --coverage",
     "test:pbt": "jest --testNamePattern=\"Property\"",
     "test:harness": "ts-node tests/harness/run-eval.ts",
-    "lint": "astro check"
+    "lint": "astro check",
+    "postinstall": "node patch-pdf-parse.js"
   },
   "keywords": [
     "pdf",
