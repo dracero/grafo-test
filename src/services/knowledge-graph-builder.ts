@@ -640,6 +640,73 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     });
   }
 
+  async saveRubric(rubric: any, pdfBase64: string): Promise<void> {
+    this.ensureConnected();
+    this.logger.info('KnowledgeGraph', 'Saving rubric to Neo4j...');
+    
+    // Convert rubric to JSON string to preserve the full structure inside Neo4j node properties
+    const rubricJson = JSON.stringify(rubric);
+    
+    return this.executeWrite(async (session) => {
+      // First delete any previous rubric
+      await session.run('MATCH (r:Rubric) DETACH DELETE r');
+      
+      // Store the new rubric as a single node
+      await session.run(`
+        CREATE (r:Rubric {
+          title: $title,
+          subtitle: $subtitle,
+          normativeDocument: $normativeDocument,
+          rubricJson: $rubricJson,
+          pdfBase64: $pdfBase64,
+          generatedAt: $generatedAt
+        })
+      `, {
+        title: rubric.title,
+        subtitle: rubric.subtitle,
+        normativeDocument: rubric.normativeDocument,
+        rubricJson,
+        pdfBase64,
+        generatedAt: rubric.generatedAt
+      });
+    });
+  }
+
+  async getLatestRubric(): Promise<{ rubric: any; pdfBase64: string } | null> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (r:Rubric)
+        RETURN r.rubricJson AS rubricJson, r.pdfBase64 AS pdfBase64
+        ORDER BY r.generatedAt DESC
+        LIMIT 1
+      `);
+      
+      if (result.records.length === 0) {
+        return null;
+      }
+      
+      const rubricJson = result.records[0].get('rubricJson');
+      const pdfBase64 = result.records[0].get('pdfBase64');
+      
+      try {
+        const rubric = JSON.parse(rubricJson);
+        return { rubric, pdfBase64 };
+      } catch (err) {
+        this.logger.error('KnowledgeGraph', 'Failed to parse stored rubric JSON', err);
+        return null;
+      }
+    });
+  }
+
+  async clearRubrics(): Promise<void> {
+    this.ensureConnected();
+    this.logger.info('KnowledgeGraph', 'Clearing all rubrics from Neo4j');
+    return this.executeWrite(async (session) => {
+      await session.run('MATCH (r:Rubric) DETACH DELETE r');
+    });
+  }
+
   // ─── Private helpers ───────────────────────────────────────────────────────
 
   private ensureConnected() {

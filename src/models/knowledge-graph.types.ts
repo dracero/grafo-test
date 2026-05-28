@@ -106,6 +106,21 @@ export interface KnowledgeGraphBuilder {
   getLatestComparison(): Promise<ComparisonReport | null>;
 
   /**
+   * Saves a generated rubric into the knowledge graph
+   */
+  saveRubric(rubric: any, pdfBase64: string): Promise<void>;
+
+  /**
+   * Retrieves the latest generated rubric from the graph
+   */
+  getLatestRubric(): Promise<{ rubric: any; pdfBase64: string } | null>;
+
+  /**
+   * Clears all rubrics from the graph
+   */
+  clearRubrics(): Promise<void>;
+
+  /**
    * Closes the connection to Neo4j
    */
   disconnect(): Promise<void>;
