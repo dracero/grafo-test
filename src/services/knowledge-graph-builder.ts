@@ -703,7 +703,136 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     this.ensureConnected();
     this.logger.info('KnowledgeGraph', 'Clearing all rubrics from Neo4j');
     return this.executeWrite(async (session) => {
-      await session.run('MATCH (r:Rubric) DETACH DELETE r');
+      await session.run('MATCH (n) WHERE n:Rubric OR n:GuideExample OR n:StructureSection OR n:EvaluableAspect DETACH DELETE n');
+    });
+  }
+
+  // ─── Guide Example & Evaluation Schema (Multi-Agent Rubric) ────────────────
+
+  /**
+   * Saves a guide example document with its detected structure sections.
+   * Creates a :GuideExample node and child :StructureSection nodes.
+   */
+  async saveGuideExample(name: string, text: string, sections: Array<{ title: string; content: string }>): Promise<void> {
+    this.ensureConnected();
+    this.logger.info('KnowledgeGraph', `Saving guide example: ${name} (${sections.length} sections)`);
+
+    return this.executeWrite(async (session) => {
+      // Remove previous guide examples
+      await session.run('MATCH (g:GuideExample) DETACH DELETE g');
+      await session.run('MATCH (s:StructureSection) DETACH DELETE s');
+
+      // Create the guide example node
+      await session.run(`
+        CREATE (g:GuideExample {
+          name: $name,
+          text: $text,
+          sectionCount: $sectionCount,
+          createdAt: datetime()
+        })
+      `, { name, text, sectionCount: sections.length });
+
+      // Create section nodes linked to the guide
+      for (let i = 0; i < sections.length; i++) {
+        const s = sections[i];
+        await session.run(`
+          MATCH (g:GuideExample {name: $guideName})
+          CREATE (s:StructureSection {
+            title: $title,
+            content: $content,
+            order: $order,
+            createdAt: datetime()
+          })
+          CREATE (s)-[:SECTION_OF]->(g)
+        `, {
+          guideName: name,
+          title: s.title,
+          content: s.content,
+          order: i + 1,
+        });
+      }
+    });
+  }
+
+  /**
+   * Saves an evaluation schema (aspects to evaluate) extracted from a PDF.
+   * Creates :EvaluableAspect nodes linked to any matching :OntologyItem nodes.
+   */
+  async saveEvaluationSchema(name: string, aspects: Array<{ id: string; aspect: string; description: string; category: string }>): Promise<void> {
+    this.ensureConnected();
+    this.logger.info('KnowledgeGraph', `Saving evaluation schema: ${name} (${aspects.length} aspects)`);
+
+    return this.executeWrite(async (session) => {
+      // Remove previous evaluation schema
+      await session.run('MATCH (ea:EvaluableAspect) DETACH DELETE ea');
+
+      for (const a of aspects) {
+        await session.run(`
+          CREATE (ea:EvaluableAspect {
+            schemaName: $schemaName,
+            aspectId: $aspectId,
+            aspect: $aspect,
+            description: $description,
+            category: $category,
+            createdAt: datetime()
+          })
+        `, {
+          schemaName: name,
+          aspectId: a.id,
+          aspect: a.aspect,
+          description: a.description,
+          category: a.category,
+        });
+      }
+    });
+  }
+
+  /**
+   * Retrieves the guide example structure sections from Neo4j.
+   */
+  async getGuideStructure(name?: string): Promise<Array<{ title: string; content: string; order: number }>> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const query = name
+        ? `MATCH (s:StructureSection)-[:SECTION_OF]->(g:GuideExample {name: $name}) RETURN s.title AS title, s.content AS content, s.order AS sOrder ORDER BY s.order`
+        : `MATCH (s:StructureSection)-[:SECTION_OF]->(g:GuideExample) RETURN s.title AS title, s.content AS content, s.order AS sOrder ORDER BY s.order`;
+      const result = await session.run(query, name ? { name } : {});
+      return result.records.map(r => ({
+        title: r.get('title'),
+        content: r.get('content'),
+        order: r.get('sOrder'),
+      }));
+    });
+  }
+
+  /**
+   * Retrieves evaluation schema aspects from Neo4j.
+   */
+  async getEvaluationSchema(): Promise<Array<{ id: string; aspect: string; description: string; category: string }>> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (ea:EvaluableAspect)
+        RETURN ea.aspectId AS id, ea.aspect AS aspect, ea.description AS description, ea.category AS category
+        ORDER BY ea.aspectId
+      `);
+      return result.records.map(r => ({
+        id: r.get('id'),
+        aspect: r.get('aspect'),
+        description: r.get('description'),
+        category: r.get('category'),
+      }));
+    });
+  }
+
+  /**
+   * Retrieves the raw text of the guide example.
+   */
+  async getGuideExampleText(): Promise<string> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run('MATCH (g:GuideExample) RETURN g.text AS text LIMIT 1');
+      return result.records[0]?.get('text') || '';
     });
   }
 

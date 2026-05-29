@@ -1,22 +1,27 @@
 /**
- * POST /api/rubric — Generates a holistic rubric from a normative PDF.
+ * POST /api/rubric — Multi-agent rubric generation from 2 input PDFs.
  *
- * Produces a rubric with 3 compliance levels:
- *   - Cumple Totalmente (2 pts) → ÓPTIMO
- *   - Cumple Parcialmente (1 pt) → ACEPTABLE CON OBSERVACIÓN
- *   - No Cumple (0 pts) → DEFICIENTE / CRÍTICO
+ * Inputs (multipart/form-data):
+ *   - normative:        PDF normativo (resolución, ordenanza)
+ *   - evaluationSchema: PDF con el esquema de aspectos evaluables
  *
  * Workflow:
- *   1. Receives the normative PDF via multipart/form-data.
- *   2. Extracts text with pdf-parse.
- *   3. Extracts the ontology with ComparisonService.extractOntology().
- *   4. Sends the ontology to Gemini to generate a holistic rubric.
- *   5. Returns JSON with the rubric data + a base64-encoded PDF.
+ *   1. Extract text from both PDFs.
+ *   2. Extract normative ontology → store in Neo4j (:OntologyItem nodes).
+ *   3. Extract evaluation schema aspects → store in Neo4j (:EvaluableAspect nodes).
+ *   4. Run 3-agent pipeline (OntologyAnalyzer → SchemaOntologyAdjuster → RubricSynthesizer).
+ *   5. Parse rubric JSON from the synthesizer agent output.
+ *   6. Generate PDF + persist to Neo4j.
+ *   7. Return JSON + base64 PDF.
+ *
+ * GET  /api/rubric — Retrieves the latest persisted rubric from Neo4j.
+ * DELETE /api/rubric — Clears all rubric data from Neo4j.
  */
 import type { APIRoute } from 'astro';
 import { getServices } from '../../lib/services';
 import { createLogger } from '../../services/logger';
 import { generateRubricPDF } from '../../services/rubric-pdf-generator';
+import { runRubricPipeline } from '../../services/rubric-agent-service';
 import pdfParse from 'pdf-parse';
 import { genkit } from 'genkit';
 import { googleAI } from '@genkit-ai/google-genai';
@@ -40,6 +45,8 @@ export interface RubricCriterion {
   dimension: string;
   criterion: string;
   description: string;
+  schemaAspectId?: string;
+  normativeRefs?: string[];
   levels: {
     /** Cumple Totalmente (2 pts) — ÓPTIMO */
     full: string;
@@ -57,6 +64,11 @@ export interface RubricData {
   criteria: RubricCriterion[];
   totalWeight: number;
   generatedAt: string;
+  nonEvaluableObservations?: Array<{
+    aspect: string;
+    reason: string;
+    recommendation: string;
+  }>;
 }
 
 // ── JSON recovery helpers ──
@@ -122,118 +134,179 @@ function parseRubricResponse(raw: string): any {
   return null;
 }
 
+// ── Helper: extract evaluation schema aspects from text ──
+
+async function extractSchemaAspects(
+  text: string,
+  config: any
+): Promise<Array<{ id: string; aspect: string; description: string; category: string }>> {
+  const ai = genkit({ plugins: [googleAI({ apiKey: config.google.apiKey })] });
+
+  const prompt = `Analiza el siguiente documento que define el esquema de evaluación (estructura / aspectos que debe cubrir una guía docente).
+
+Extraé TODOS los aspectos evaluables que figuran en el documento. Cada aspecto es un punto que la rúbrica de evaluación debe verificar.
+
+Para cada aspecto, devolvé:
+- "id": Un ID único (ej: "ASP-001", "ASP-002", etc.)
+- "aspect": Nombre del aspecto evaluable
+- "description": Descripción detallada de qué se evalúa
+- "category": Categoría/dimensión temática (ej: "Datos Institucionales", "Objetivos", "Contenidos", "Metodología", "Evaluación", "Bibliografía", "Carga Horaria", etc.)
+
+Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
+{"aspects": [{"id": "ASP-001", "aspect": "...", "description": "...", "category": "..."}]}
+
+DOCUMENTO DE ESQUEMA DE EVALUACIÓN:
+${text.substring(0, 100000)}`;
+
+  const response = await retryWithBackoff(
+    async () => ai.generate({
+      model: 'googleai/gemini-2.5-flash',
+      prompt,
+      output: { format: 'text' },
+      config: { maxOutputTokens: 32_768 },
+    }),
+    {
+      maxRetries: 3,
+      initialDelayMs: 10_000,
+      maxDelayMs: 60_000,
+      component: 'RubricAPI',
+      operationName: 'extractSchemaAspects',
+      logger,
+    }
+  );
+
+  const raw = response.text ?? '';
+  const cleaned = raw.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    return parsed.aspects || [];
+  } catch {
+    return extractCompleteObjects(cleaned).filter(o => o.id && o.aspect);
+  }
+}
+
+// ── POST ────────────────────────────────────────────────────────────────────
+
 export const POST: APIRoute = async ({ request }) => {
   try {
     const { comparisonService, graphBuilder, config } = await getServices();
     const formData = await request.formData();
-    const normFile = formData.get('normative') as File | null;
 
-    if (!normFile) {
-      return new Response(JSON.stringify({ success: false, error: 'Se requiere un archivo PDF normativo' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
+    const normFile = formData.get('normative') as File | null;
+    const schemaFile = formData.get('evaluationSchema') as File | null;
+
+    if (!normFile || !schemaFile) {
+      const missing = [];
+      if (!normFile) missing.push('documento normativo');
+      if (!schemaFile) missing.push('esquema de evaluación');
+      return new Response(JSON.stringify({
+        success: false,
+        error: `Faltan archivos: ${missing.join(', ')}`
+      }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
-    logger.info('Rubric', `Generating rubric from: ${normFile.name}`);
+    logger.info('Rubric', `Multi-agent rubric generation: normative=${normFile.name}, schema=${schemaFile.name}`);
 
-    // 1. Extract text
-    const normBuffer = Buffer.from(await normFile.arrayBuffer());
-    const normPdf = await pdfParse(normBuffer);
+    // ── Step 1: Extract text from both PDFs ──
+    logger.info('Rubric', 'Step 1: Extracting text from PDFs...');
+    const [normBuffer, schemaBuffer] = await Promise.all([
+      normFile.arrayBuffer().then(b => Buffer.from(b)),
+      schemaFile.arrayBuffer().then(b => Buffer.from(b)),
+    ]);
+
+    const [normPdf, schemaPdf] = await Promise.all([
+      pdfParse(normBuffer),
+      pdfParse(schemaBuffer),
+    ]);
 
     if (!normPdf.text?.trim()) {
       return new Response(JSON.stringify({ success: false, error: 'No se pudo extraer texto del documento normativo' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (!schemaPdf.text?.trim()) {
+      return new Response(JSON.stringify({ success: false, error: 'No se pudo extraer texto del esquema de evaluación' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    // 2. Extract ontology
-    logger.info('Rubric', 'Extracting ontology...');
+    // ── Step 2: Extract & store normative ontology ──
+    logger.info('Rubric', 'Step 2: Extracting normative ontology...');
     const ontology = await comparisonService.extractOntology(normPdf.text);
     logger.info('Rubric', `Ontology extracted: ${ontology.length} items`);
 
-    // 3. Generate rubric with Gemini
-    logger.info('Rubric', 'Generating holistic rubric with Gemini...');
+    // Store normative document + ontology items in Neo4j
+    const neo4jDriver = (graphBuilder as any).driver;
+    if (neo4jDriver) {
+      const session = neo4jDriver.session();
+      try {
+        // Ensure NormativeDocument exists
+        await session.run(`
+          MERGE (d:Entity {name: $name})
+          ON CREATE SET d.createdAt = datetime(), d.type = 'DOCUMENT', d.text = $text
+          ON MATCH SET d.text = $text
+          SET d:Document:NormativeDocument
+        `, { name: normFile.name, text: normPdf.text.substring(0, 500000) });
 
-    const ai = genkit({
-      plugins: [googleAI({ apiKey: config.google.apiKey })],
-    });
-
-    const ontologyList = ontology.map(item =>
-      `- [${item.category}] ${item.id}: ${item.requirement} — ${item.description} (Keywords: ${(item.keywords || []).join(', ')})`
-    ).join('\n');
-
-    const prompt = `Eres un experto en diseño curricular, evaluación educativa, acreditación universitaria y auditoría de programas.
-
-A partir de la siguiente ontología de requisitos normativos, genera una RÚBRICA INTEGRAL DE EVALUACIÓN para la auditoría y revisión de programas de materia y aulas virtuales.
-
-La rúbrica debe tener EXACTAMENTE 3 NIVELES DE CUMPLIMIENTO:
-- "Cumple Totalmente" (2 puntos) → Etiquetado como ÓPTIMO
-- "Cumple Parcialmente" (1 punto) → Etiquetado como ACEPTABLE CON OBSERVACIÓN
-- "No Cumple" (0 puntos) → Etiquetado como DEFICIENTE / CRÍTICO
-
-INSTRUCCIONES DETALLADAS:
-1. Agrupa los requisitos en DIMENSIONES temáticas (ej: "Coherencia Político-Normativa e Institucional", "Estructura Organizativa", "Diseño Didáctico y Mediaciones", "Evaluación y Seguimiento", etc.).
-2. Dentro de cada dimensión, define COMPONENTES EVALUADOS específicos (ej: "1.1 Límite de Carga Horaria Virtual", "1.2 Consistencia con el Programa Oficial", etc.).
-3. Cada componente debe tener:
-   - Un ID numérico con formato "X.Y" (dimensión.componente)
-   - Un nombre descriptivo del componente evaluado
-   - Un "Criterio de Calidad Institucional": descripción detallada de qué se evalúa y por qué
-   - Tres niveles de cumplimiento con descriptores DETALLADOS y ESPECÍFICOS:
-     * "full": Descriptor ÓPTIMO — qué evidencia se encuentra cuando cumple totalmente
-     * "partial": Descriptor ACEPTABLE CON OBSERVACIÓN — qué se encuentra cuando cumple parcialmente
-     * "none": Descriptor DEFICIENTE/CRÍTICO — qué se encuentra cuando no cumple
-4. Los descriptores de cada nivel deben ser CONCRETOS y ESPECÍFICOS (no genéricos), describiendo exactamente qué evidencia buscar.
-5. Referencia las normativas originales cuando sea posible (resoluciones, artículos, etc.).
-
-Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
-
-{
-  "title": "Rúbrica Integral para la Auditoría y Revisión de Programas",
-  "subtitle": "EVALUACIÓN DE CUMPLIMIENTO DE NORMATIVA — Generada automáticamente",
-  "criteria": [
-    {
-      "id": "1.1",
-      "dimension": "Coherencia Político-Normativa e Institucional",
-      "criterion": "Nombre del Componente Evaluado",
-      "description": "Criterio de calidad institucional detallado que explica qué se verifica y por qué es importante",
-      "levels": {
-        "full": "ÓPTIMO — Descriptor detallado de cumplimiento total con evidencias específicas",
-        "partial": "ACEPTABLE CON OBSERVACIÓN — Descriptor de cumplimiento parcial con las deficiencias detectables",
-        "none": "DEFICIENTE / CRÍTICO — Descriptor de incumplimiento con las falencias críticas"
+        // Save OntologyItems
+        for (const item of ontology) {
+          const uniqueName = `${normFile.name}_${item.id}`;
+          await session.run(`
+            MATCH (d:Entity {name: $docName})
+            WHERE d:NormativeDocument
+            MERGE (o:Entity {name: $uniqueName})
+            ON CREATE SET
+              o.id = $itemId,
+              o.requirement = $requirement,
+              o.category = $category,
+              o.description = $description,
+              o.keywords = $keywords,
+              o.type = 'CONCEPT',
+              o.sourceText = $description,
+              o.createdAt = datetime()
+            ON MATCH SET
+              o.requirement = $requirement,
+              o.category = $category,
+              o.description = $description,
+              o.keywords = $keywords,
+              o.sourceText = $description
+            SET o:OntologyItem
+            MERGE (o)-[:EXTRACTED_FROM]->(d)
+          `, {
+            docName: normFile.name,
+            uniqueName,
+            itemId: item.id,
+            requirement: item.requirement,
+            category: item.category,
+            description: item.description,
+            keywords: item.keywords || [],
+          });
+        }
+      } finally {
+        await session.close();
       }
     }
-  ]
-}
 
-═══════════════════════════════════════════════════════════
-ONTOLOGÍA DE REQUISITOS NORMATIVOS (${ontology.length} items):
-═══════════════════════════════════════════════════════════
-${ontologyList}`;
+    // ── Step 3: Extract & store evaluation schema ──
+    logger.info('Rubric', 'Step 3: Extracting evaluation schema...');
+    const schemaAspects = await extractSchemaAspects(schemaPdf.text, config);
+    logger.info('Rubric', `Schema aspects extracted: ${schemaAspects.length}`);
+    await graphBuilder.saveEvaluationSchema(schemaFile.name, schemaAspects);
 
-    const response = await retryWithBackoff(
-      async () => ai.generate({
-        model: 'googleai/gemini-2.5-flash',
-        prompt,
-        output: { format: 'text' },
-        config: { maxOutputTokens: 65_536 },
-      }),
-      {
-        maxRetries: 5,
-        initialDelayMs: 15_000,
-        maxDelayMs: 90_000,
-        component: 'RubricAPI',
-        operationName: 'generateRubric',
-        logger,
+    // ── Step 4: Run multi-agent pipeline ──
+    logger.info('Rubric', 'Step 4: Running multi-agent rubric pipeline...');
+    let rubricRaw: any = null;
+
+    for await (const update of runRubricPipeline(normFile.name, schemaFile.name, graphBuilder)) {
+      logger.info('Rubric', `[${update.step}] final=${update.isFinal}, content length=${update.content.length}`);
+
+      if (update.step === 'RubricSynthesizerAgent' && update.isFinal) {
+        rubricRaw = parseRubricResponse(update.content);
       }
-    );
-
-    const rawText = response.text ?? '';
-    const rubricRaw = parseRubricResponse(rawText);
+    }
 
     if (!rubricRaw || !rubricRaw.criteria || rubricRaw.criteria.length === 0) {
-      throw new Error('No se pudo generar la rúbrica a partir de la ontología');
+      throw new Error('No se pudo generar la rúbrica desde el pipeline multi-agente');
     }
 
     // Normalize criteria
@@ -242,6 +315,8 @@ ${ontologyList}`;
       dimension: c.dimension || 'General',
       criterion: c.criterion || c.name || '',
       description: c.description || '',
+      schemaAspectId: c.schemaAspectId || null,
+      normativeRefs: c.normativeRefs || [],
       levels: {
         full: c.levels?.full || c.levels?.cumple_totalmente || c.levels?.excellent || '',
         partial: c.levels?.partial || c.levels?.cumple_parcialmente || c.levels?.acceptable || '',
@@ -249,25 +324,25 @@ ${ontologyList}`;
       },
     }));
 
-    // Total weight: 2 points per criterion
     const totalWeight = criteria.length * 2;
 
     const rubric: RubricData = {
-      title: rubricRaw.title || 'Rúbrica Integral para la Auditoría y Revisión de Programas',
-      subtitle: rubricRaw.subtitle || 'EVALUACIÓN DE CUMPLIMIENTO DE NORMATIVA',
+      title: rubricRaw.title || 'Rúbrica Integral para la Auditoría y Revisión de Guías Docentes',
+      subtitle: rubricRaw.subtitle || 'EVALUACIÓN DE CUMPLIMIENTO — Sistema Multi-Agente',
       normativeDocument: normFile.name,
       criteria,
       totalWeight,
       generatedAt: new Date().toISOString(),
+      nonEvaluableObservations: rubricRaw.nonEvaluableObservations || [],
     };
 
-    logger.info('Rubric', `✅ Rubric generated: ${criteria.length} criteria, max score: ${totalWeight} pts`);
+    logger.info('Rubric', `✅ Multi-agent rubric generated: ${criteria.length} criteria, max score: ${totalWeight} pts`);
 
-    // 4. Generate PDF
+    // ── Step 5: Generate PDF ──
     const pdfBuffer = await generateRubricPDF(rubric);
     const pdfBase64 = pdfBuffer.toString('base64');
 
-    // 5. Persist to Neo4j database
+    // ── Step 6: Persist to Neo4j ──
     logger.info('Rubric', 'Persisting generated rubric to Neo4j...');
     await graphBuilder.saveRubric(rubric, pdfBase64);
 
@@ -287,6 +362,8 @@ ${ontologyList}`;
     });
   }
 };
+
+// ── GET ─────────────────────────────────────────────────────────────────────
 
 /**
  * GET /api/rubric — Retrieves the latest persisted rubric from Neo4j.
@@ -319,6 +396,8 @@ export const GET: APIRoute = async () => {
   }
 };
 
+// ── DELETE ───────────────────────────────────────────────────────────────────
+
 /**
  * DELETE /api/rubric — Clears all rubrics from Neo4j.
  */
@@ -338,4 +417,3 @@ export const DELETE: APIRoute = async () => {
     });
   }
 };
-

@@ -1,7 +1,7 @@
 ---
 /**
- * Rubric Generator page — generate a holistic rubric from a normative PDF.
- * Standalone page: upload → generate → preview → download PDF → clear.
+ * Rubric Generator page — Multi-agent rubric generation.
+ * Upload 2 PDFs (normative + evaluation schema) → multi-agent pipeline → preview → download PDF → clear.
  */
 ---
 <!DOCTYPE html>
@@ -9,8 +9,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Generador de rúbricas holísticas a partir de documentos normativos educativos">
-  <title>Generador de Rúbricas — Knowledge Graph</title>
+  <meta name="description" content="Generador de rúbricas multi-agente para evaluación de guías docentes">
+  <title>Generador de Rúbricas Multi-Agente — Knowledge Graph</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
@@ -40,62 +40,73 @@
     }
     .page-hero p {
       color: var(--text-secondary); font-size: 1rem;
-      max-width: 680px; margin: 0 auto; line-height: 1.7;
+      max-width: 750px; margin: 0 auto; line-height: 1.7;
     }
 
-    /* ── Upload Card ── */
-    .upload-center {
-      display: flex; justify-content: center; margin-bottom: 32px;
+    /* ── Upload Cards Grid (2 cards) ── */
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-bottom: 32px;
+      max-width: 860px;
+      margin-left: auto;
+      margin-right: auto;
     }
     .upload-card-rubric {
       background: var(--bg-secondary);
       border: 2px dashed var(--border-light);
       border-radius: var(--radius-lg);
-      padding: 40px 48px;
+      padding: 32px 28px;
       text-align: center;
       transition: all var(--transition-normal);
       cursor: pointer;
       position: relative;
       overflow: hidden;
-      min-width: 420px;
-      max-width: 540px;
     }
     .upload-card-rubric:hover {
-      border-color: #f59e0b;
       background: var(--bg-elevated);
-      box-shadow: 0 0 30px rgba(245, 158, 11, 0.08);
     }
     .upload-card-rubric.has-file {
       border-color: var(--accent-emerald);
       border-style: solid;
     }
     .upload-card-rubric input[type="file"] {
-      display: block; margin: 15px auto 0; cursor: pointer;
-      font-size: 0.9rem; color: var(--text-secondary);
+      display: block; margin: 14px auto 0; cursor: pointer;
+      font-size: 0.85rem; color: var(--text-secondary);
+      max-width: 100%;
     }
     .upload-card-rubric input[type="file"]::file-selector-button {
       background: var(--bg-tertiary); border: 1px solid var(--border-light);
       padding: 8px 16px; border-radius: var(--radius-sm);
       color: var(--text-primary); font-weight: 600; cursor: pointer;
-      margin-right: 12px; transition: all var(--transition-fast);
+      margin-right: 10px; transition: all var(--transition-fast);
+      font-size: 0.82rem;
     }
     .upload-card-rubric input[type="file"]::file-selector-button:hover {
-      background: var(--bg-elevated); border-color: #f59e0b;
+      background: var(--bg-elevated);
     }
-    .upload-icon { font-size: 3rem; margin-bottom: 14px; display: block; }
+    .upload-icon { font-size: 2.8rem; margin-bottom: 12px; display: block; }
     .upload-card-rubric h3 {
-      font-size: 1.1rem; font-weight: 700;
+      font-size: 1.05rem; font-weight: 700;
       color: var(--text-primary); margin-bottom: 6px;
     }
     .upload-card-rubric p {
-      font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;
+      font-size: 0.82rem; color: var(--text-muted); line-height: 1.5;
     }
     .upload-filename-rubric {
-      margin-top: 12px; font-size: 0.88rem; font-weight: 600;
+      margin-top: 12px; font-size: 0.85rem; font-weight: 600;
       color: var(--accent-emerald); display: none;
+      word-break: break-all;
     }
     .upload-card-rubric.has-file .upload-filename-rubric { display: block; }
     .upload-card-rubric.has-file .upload-hint { display: none; }
+
+    /* Card-specific accent colors */
+    .upload-card-rubric[data-type="normative"]:hover { border-color: #f59e0b; box-shadow: 0 0 30px rgba(245, 158, 11, 0.08); }
+    .upload-card-rubric[data-type="normative"] input[type="file"]::file-selector-button:hover { border-color: #f59e0b; }
+    .upload-card-rubric[data-type="schema"]:hover { border-color: #8b5cf6; box-shadow: 0 0 30px rgba(139, 92, 246, 0.08); }
+    .upload-card-rubric[data-type="schema"] input[type="file"]::file-selector-button:hover { border-color: #8b5cf6; }
 
     /* ── Actions ── */
     .rubric-actions {
@@ -153,17 +164,17 @@
     @keyframes progressSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
     .progress-status { font-size: 0.85rem; color: var(--text-secondary); text-align: center; margin-top: 12px; }
 
-    /* ── Steps ── */
+    /* ── Steps (5 steps) ── */
     .rubric-steps {
-      display: flex; justify-content: center; gap: 16px;
+      display: flex; justify-content: center; gap: 12px;
       margin-bottom: 32px; flex-wrap: wrap;
     }
     .rubric-step {
-      display: flex; align-items: center; gap: 8px;
-      padding: 10px 18px; background: var(--bg-secondary);
+      display: flex; align-items: center; gap: 7px;
+      padding: 9px 16px; background: var(--bg-secondary);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-md);
-      font-size: 0.85rem; color: var(--text-muted);
+      font-size: 0.8rem; color: var(--text-muted);
       transition: all var(--transition-normal);
     }
     .rubric-step.active {
@@ -174,13 +185,25 @@
       border-color: var(--accent-emerald); color: var(--accent-emerald);
     }
     .step-num {
-      width: 24px; height: 24px; border-radius: 50%;
+      width: 22px; height: 22px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 0.75rem; font-weight: 700;
+      font-size: 0.7rem; font-weight: 700;
       background: var(--bg-tertiary); color: var(--text-muted);
     }
     .rubric-step.active .step-num { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
     .rubric-step.done .step-num { background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); }
+
+    /* ── Multi-Agent Badge ── */
+    .multi-agent-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(6, 182, 212, 0.12));
+      border: 1px solid rgba(139, 92, 246, 0.25);
+      border-radius: var(--radius-full);
+      padding: 5px 14px; font-size: 0.72rem; font-weight: 700;
+      color: #a78bfa; letter-spacing: 0.04em;
+      margin-bottom: 16px;
+    }
+    .multi-agent-badge::before { content: "🤖"; }
 
     /* ── Rubric Preview ── */
     .rubric-preview { display: none; }
@@ -204,22 +227,42 @@
       font-size: 0.88rem; font-weight: 600; color: var(--text-primary);
     }
 
-    /* Dimension sections */
-    .dimension-section {
+    /* ── Non-evaluable observations panel ── */
+    .observations-panel {
       margin-bottom: 28px;
+      padding: 18px 22px;
+      background: linear-gradient(135deg, rgba(251, 191, 36, 0.06), rgba(245, 158, 11, 0.04));
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      border-radius: var(--radius-md);
     }
+    .observations-panel h3 {
+      font-size: 0.9rem; font-weight: 700; color: #fbbf24;
+      margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+    }
+    .observation-item {
+      padding: 10px 14px;
+      border-left: 3px solid rgba(245, 158, 11, 0.4);
+      margin-bottom: 8px;
+      background: rgba(245, 158, 11, 0.04);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .observation-item strong {
+      color: var(--text-primary); font-size: 0.82rem;
+    }
+    .observation-item p {
+      color: var(--text-secondary); font-size: 0.76rem; margin-top: 4px; line-height: 1.5;
+    }
+
+    /* Dimension sections */
+    .dimension-section { margin-bottom: 28px; }
     .dimension-header {
       display: flex; align-items: center; gap: 10px;
       padding: 12px 18px; background: linear-gradient(135deg, #1e3a5f, #1e293b);
       border-radius: var(--radius-md) var(--radius-md) 0 0;
       border: 1px solid rgba(59, 130, 246, 0.2);
     }
-    .dimension-icon {
-      font-size: 1.2rem;
-    }
-    .dimension-name {
-      font-size: 0.95rem; font-weight: 700; color: #93c5fd;
-    }
+    .dimension-icon { font-size: 1.2rem; }
+    .dimension-name { font-size: 0.95rem; font-weight: 700; color: #93c5fd; }
     .dimension-count {
       margin-left: auto; font-size: 0.72rem; font-weight: 600;
       padding: 3px 10px; background: rgba(59, 130, 246, 0.15);
@@ -256,11 +299,9 @@
     .criteria-table tr:hover { background: rgba(255, 255, 255, 0.04); }
 
     .td-criterion { font-weight: 600; color: var(--text-primary); }
-    .td-criterion-desc { font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; font-weight: 400; }
     .td-excellent { color: #4ade80; }
     .td-acceptable { color: #fbbf24; }
     .td-insufficient { color: #f87171; }
-
 
     /* ── Nav ── */
     .nav-link {
@@ -271,7 +312,7 @@
     .nav-link:hover { color: var(--text-primary); background: var(--bg-tertiary); }
 
     @media (max-width: 768px) {
-      .upload-card-rubric { min-width: auto; width: 100%; }
+      .upload-grid { grid-template-columns: 1fr; max-width: 420px; }
       .rubric-steps { flex-direction: column; align-items: center; }
       .criteria-table { font-size: 0.7rem; }
       .criteria-table th, .criteria-table td { padding: 6px 8px; }
@@ -303,45 +344,60 @@
     <div class="rubric-content">
       <!-- Hero -->
       <div class="page-hero">
+        <span class="multi-agent-badge">Sistema Multi-Agente (3 Agentes)</span>
         <h1>📝 Generador de Rúbricas</h1>
-        <p>Subí el documento normativo y el sistema generará automáticamente una rúbrica holística de evaluación curricular con criterios, dimensiones y niveles de desempeño.</p>
+        <p>Subí el documento normativo y el esquema de evaluación. El sistema multi-agente analizará la ontología, la ajustará con el esquema y generará una rúbrica integral cubriendo solo los aspectos evaluables.</p>
       </div>
 
-      <!-- Steps indicator -->
+      <!-- Steps indicator (5 steps) -->
       <div class="rubric-steps" id="rubric-steps">
         <div class="rubric-step" id="step-upload">
           <span class="step-num">1</span>
-          <span>Subir PDF</span>
+          <span>Subir PDFs</span>
         </div>
-        <div class="rubric-step" id="step-ontology">
+        <div class="rubric-step" id="step-extract">
           <span class="step-num">2</span>
-          <span>Extraer Ontología</span>
+          <span>Extraer Datos</span>
         </div>
-        <div class="rubric-step" id="step-rubric">
+        <div class="rubric-step" id="step-ontology-agent">
           <span class="step-num">3</span>
-          <span>Generar Rúbrica</span>
+          <span>🤖 Analizar Ontología</span>
         </div>
-        <div class="rubric-step" id="step-preview">
+        <div class="rubric-step" id="step-adjuster-agent">
           <span class="step-num">4</span>
-          <span>Vista Previa</span>
+          <span>🤖 Ajustar con Esquema</span>
+        </div>
+        <div class="rubric-step" id="step-synthesizer-agent">
+          <span class="step-num">5</span>
+          <span>🤖 Sintetizar Rúbrica</span>
         </div>
       </div>
 
-      <!-- Upload Card -->
-      <div class="upload-center" id="upload-section">
-        <div class="upload-card-rubric" id="card-normative-rubric">
+      <!-- Upload Cards (2) -->
+      <div class="upload-grid" id="upload-section">
+        <!-- Normative PDF -->
+        <div class="upload-card-rubric" data-type="normative" id="card-normative-rubric">
           <input type="file" accept=".pdf" id="file-normative-rubric">
           <span class="upload-icon">📋</span>
           <h3>Documento Normativo</h3>
           <p class="upload-hint">Resolución, ordenanza o reglamento con los requisitos de la carrera o materia</p>
           <p class="upload-filename-rubric" id="name-normative-rubric"></p>
         </div>
+
+        <!-- Evaluation Schema PDF -->
+        <div class="upload-card-rubric" data-type="schema" id="card-schema-rubric">
+          <input type="file" accept=".pdf" id="file-schema-rubric">
+          <span class="upload-icon">📐</span>
+          <h3>Esquema de Evaluación</h3>
+          <p class="upload-hint">Documento con los aspectos y estructura que la rúbrica debe cubrir</p>
+          <p class="upload-filename-rubric" id="name-schema-rubric"></p>
+        </div>
       </div>
 
       <!-- Actions -->
       <div class="rubric-actions" id="rubric-actions">
         <button id="btn-generate-rubric" class="btn-generate" disabled>
-          📝 Generar Rúbrica
+          🤖 Generar Rúbrica Multi-Agente
         </button>
         <a id="btn-download-rubric" class="btn-download-rubric" download="rubrica.pdf">
           📥 Descargar PDF
@@ -354,7 +410,7 @@
       <!-- Progress -->
       <div class="rubric-progress" id="rubric-progress">
         <div class="progress-track"><div class="progress-fill"></div></div>
-        <p class="progress-status" id="rubric-progress-status">Procesando documento normativo...</p>
+        <p class="progress-status" id="rubric-progress-status">Procesando documentos...</p>
       </div>
 
       <!-- Rubric Preview -->
@@ -377,7 +433,17 @@
               <span class="rubric-meta-label">Peso Total</span>
               <span class="rubric-meta-value" id="rubric-total-weight">—</span>
             </div>
+            <div class="rubric-meta-item">
+              <span class="rubric-meta-label">Método</span>
+              <span class="rubric-meta-value" style="color: #a78bfa;">🤖 Multi-Agente</span>
+            </div>
           </div>
+        </div>
+
+        <!-- Non-evaluable observations -->
+        <div class="observations-panel" id="observations-panel" style="display:none;">
+          <h3>⚠️ Aspectos Normativos No Incluidos en la Rúbrica</h3>
+          <div id="observations-container"></div>
         </div>
 
         <div id="rubric-dimensions-container"></div>
