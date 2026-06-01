@@ -229,13 +229,14 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
           // Calculate row height
           const cellPad = 10;
           const componentText = `${c.id} ${c.criterion}`;
-          const heights = [
-            doc.heightOfString(componentText, { width: colComponent - cellPad, fontSize: 7 }) + 8,
-            doc.heightOfString(c.description, { width: colCriteria - cellPad, fontSize: 6.5 }) + 8,
-            doc.heightOfString(c.levels.full, { width: colLevel - cellPad, fontSize: 6.5 }) + 18,
-            doc.heightOfString(c.levels.partial, { width: colLevel - cellPad, fontSize: 6.5 }) + 18,
-            doc.heightOfString(c.levels.none, { width: colLevel - cellPad, fontSize: 6.5 }) + 18,
-          ];
+          doc.fontSize(7);
+          const hComponent = doc.heightOfString(componentText, { width: colComponent - cellPad }) + 8;
+          doc.fontSize(6.5);
+          const hDesc = doc.heightOfString(c.description, { width: colCriteria - cellPad }) + 8;
+          const hFull = doc.heightOfString(c.levels.full, { width: colLevel - cellPad }) + 18;
+          const hPartial = doc.heightOfString(c.levels.partial, { width: colLevel - cellPad }) + 18;
+          const hNone = doc.heightOfString(c.levels.none, { width: colLevel - cellPad }) + 18;
+          const heights = [hComponent, hDesc, hFull, hPartial, hNone];
           const rowH = Math.max(...heights, 60);
 
           // Page overflow check
@@ -288,7 +289,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
              .fontSize(7)
              .text(c.id, margin + 5, rowY + 5, { width: colComponent - 10 });
 
-          const idH = doc.heightOfString(c.id, { width: colComponent - 10, fontSize: 7 });
+          const idH = doc.heightOfString(c.id, { width: colComponent - 10 });
           doc.fillColor('#1e293b')
              .font('Helvetica-Bold')
              .fontSize(7)

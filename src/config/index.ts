@@ -4,7 +4,7 @@
  * Exports all configuration types, interfaces, and utilities
  */
 
-export {
+export type {
   // Interfaces
   Neo4jConfig,
   GoogleConfig,
@@ -12,8 +12,10 @@ export {
   ProcessingConfig,
   VectorSearchConfig,
   SystemConfig,
-  ValidationResult,
-  
+  ValidationResult
+} from './types';
+
+export {
   // Enums
   EnvVariable,
   ConfigErrorType,

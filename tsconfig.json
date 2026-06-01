@@ -14,7 +14,9 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "types": ["node", "astro/client"]
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+    "types": ["node", "astro/client", "jest"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]

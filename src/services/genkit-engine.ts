@@ -62,7 +62,6 @@ export class GenkitEngineImpl implements GenkitEngine {
   async initialize(config: GoogleConfig): Promise<void> {
     try {
       this.ai = genkit({
-        enableTracingAndMetrics: true,
         plugins: [
           googleAI({ apiKey: config.apiKey }),
           // ── Neo4j Agent Skills plugin ─────────────────────────────────────

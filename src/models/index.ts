@@ -4,7 +4,10 @@
  */
 
 export {
-  EntityType,
+  EntityType
+} from './genkit.types';
+
+export type {
   Entity,
   Relationship,
   AnalysisResult,

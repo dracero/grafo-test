@@ -3,9 +3,6 @@
 # Exit on error
 set -e
 
-# Clear screen for readability
-clear
-
 echo "================================================================="
 echo "⚡  CURRICULUM COMPLIANCE PIPELINE: ON-DEMAND VERIFICATION  ⚡"
 echo "================================================================="

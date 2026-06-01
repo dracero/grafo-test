@@ -693,7 +693,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         const rubric = JSON.parse(rubricJson);
         return { rubric, pdfBase64 };
       } catch (err) {
-        this.logger.error('KnowledgeGraph', 'Failed to parse stored rubric JSON', err);
+        this.logger.error('KnowledgeGraph', 'Failed to parse stored rubric JSON', err as Error);
         return null;
       }
     });

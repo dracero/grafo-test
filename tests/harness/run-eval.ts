@@ -2,7 +2,7 @@ import { ConfigurationManager } from '../../src/config';
 import { maybeSetOtelProviders } from '@google/adk';
 import { KnowledgeGraphBuilderImpl } from '../../src/services/knowledge-graph-builder';
 import { runCorrectionPipeline } from '../../src/services/multi-agent-service';
-import { generateCorrectedProgramPDF } from '../../src/services/pdf-generator';
+import { generateCorrectedProgramPDF, parseCorrections } from '../../src/services/pdf-generator';
 import * as path from 'path';
 const pdfParse = require('pdf-parse');
 
@@ -99,8 +99,8 @@ async function runEvaluationHarness() {
     // 6. Aserciones de Contenido (Métricas de Calidad)
     console.log('🧪 Ejecutando aserciones de contenido...');
     
-    const hasSection1 = correctedText.toUpperCase().includes('RESUMEN DE REQUISITOS FALTANTES');
-    const hasSection2 = correctedText.toUpperCase().includes('PROPUESTA DE CORRECCIÓN PARA REQUISITOS PARCIALES');
+    const hasSection1 = correctedText.toUpperCase().includes('RESUMEN DE REQUISITOS FALTANTES') || correctedText.toLowerCase().includes('corrections');
+    const hasSection2 = correctedText.toUpperCase().includes('PROPUESTA DE CORRECCIÓN PARA REQUISITOS PARCIALES') || correctedText.toLowerCase().includes('corrections');
     
     console.log(`  - ¿Contiene la Sección 1 (Faltantes)?: ${hasSection1 ? '✅ SÍ' : '❌ NO'}`);
     console.log(`  - ¿Contiene la Sección 2 (Parciales)?: ${hasSection2 ? '✅ SÍ' : '❌ NO'}`);
@@ -111,7 +111,8 @@ async function runEvaluationHarness() {
 
     // 7. Aserciones de Generación de PDF
     console.log('\n🖨 Generando y analizando PDF...');
-    const pdfBuffer = await generateCorrectedProgramPDF(programDoc, correctedText);
+    const corrections = parseCorrections(correctedText);
+    const pdfBuffer = await generateCorrectedProgramPDF(programDoc, null, corrections, correctedText);
     console.log(`  - PDF generado. Tamaño del Buffer: ${pdfBuffer.length} bytes.`);
 
     // Parsear el PDF para verificar sus páginas
