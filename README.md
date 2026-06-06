@@ -19,6 +19,7 @@ graph TD
     C -->|POST /api/compare| D[PDF Processor]
     C -->|POST /api/search| E[Neo4j Agent Skills - Retriever]
     C -->|POST /api/fix| K[Pipeline de Agentes ADK]
+    C -->|GET /api/compare/non-compliance-pdf| O[Non-Compliance PDF Generator]
     
     D -->|Extrae Texto| F[Comparison Service]
     F -->|Prompt Holístico| G((Gemini 2.5 Flash))
@@ -32,7 +33,8 @@ graph TD
     K -->|Traza Spans| L[OpenTelemetry Provider]
     L -->|Manda Traces OTLP| M[Langsmith Dashboard]
     K -->|Informe de Adecuación| N[PDF Generator]
-    N -->|PDF sin hojas vacías| B
+    N -->|PDF de Adecuación| B
+    O -->|PDF de No Conformidades| B
 ```
 
 ### 2. Funcionamiento de la Comparación Holística (Genkit)
@@ -72,18 +74,20 @@ Cuando un programa de materia cuenta con brechas (requisitos faltantes o parcial
 
 ### Arquitectura de Agentes Secuenciales
 
-El pipeline está orquestado mediante un `SequentialAgent` que ejecuta de forma ordenada cuatro agentes especialistas de ADK:
+El pipeline está orquestado mediante un `SequentialAgent` que ejecuta de forma ordenada cinco agentes especialistas de ADK:
 
 ```mermaid
 graph LR
     A[NormativeOntologyAgent] --> B[ProgramOntologyAgent]
     B --> C[ComplianceGapsAgent]
-    C --> D[ProgramFixerAgent]
+    C --> D[ComplianceValidatorAgent]
+    D --> E[ProgramFixerAgent]
     
     style A fill:#bfdbfe,stroke:#3b82f6
     style B fill:#bfdbfe,stroke:#3b82f6
     style C fill:#fef3c7,stroke:#d97706
-    style D fill:#bbf7d0,stroke:#16a34a
+    style D fill:#fef3c7,stroke:#d97706
+    style E fill:#bbf7d0,stroke:#16a34a
 ```
 
 1.  **`NormativeOntologyAgent`**: Consulta la base de datos de grafos de Neo4j para recuperar la ontología normativa analizada. Resume y estructura los requisitos que cualquier plan de estudios debe cumplir.
@@ -91,7 +95,8 @@ graph LR
 3.  **`ComplianceGapsAgent`**: Lee las brechas normativas identificadas entre ambos documentos. Consolida y estructura las deficiencias y redacta sugerencias basadas en directivas pedagógicas específicas:
     *   *Transversalidad*: No propone nuevas materias para competencias transversales (como herramientas digitales o ética).
     *   *Gradualidad*: Recomienda insertar y enriquecer los espacios de integración curricular existentes (proyectos introductorios de primer año, sustentabilidad y trabajos integradores finales).
-4.  **`ProgramFixerAgent`**: Es el agente de cierre. Toma el análisis del pipeline y produce un **Informe de Adecuación Ejecutivo** compuesto por dos secciones:
+4.  **`ComplianceValidatorAgent` (Agente Validador Semántico)**: Valida de manera holística si las brechas consolidadas son reales o representan falsos positivos. Descarta brechas si el programa incluye declaraciones legítimas de no aplicabilidad o negativas justificados (e.g. "no se concede dispensa", "no hay softwares requeridos").
+5.  **`ProgramFixerAgent`**: Es el agente de cierre. Toma el análisis del pipeline depurado por el validador y produce un **Informe de Adecuación Ejecutivo** compuesto por dos secciones:
     *   **Resumen de Requisitos Faltantes** (con viñetas de lo ausente).
     *   **Propuesta de Corrección para Requisitos Parciales** (cómo enriquecer transversalmente el plan de estudios).
     *   *Optimización*: No reescribe todo el programa de estudios original. Esto previene el desbordamiento de tokens y acelera drásticamente el flujo de procesamiento.
