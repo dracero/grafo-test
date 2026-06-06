@@ -95,6 +95,7 @@ function renderResults(report) {
 
   const hasGaps = s.partial > 0 || s.missing > 0;
   document.getElementById('btn-fix').style.display = hasGaps ? 'block' : 'none';
+  document.getElementById('btn-download-non-compliance').style.display = hasGaps ? 'block' : 'none';
 
   document.getElementById('summary-grid').innerHTML = `
     <div class="summary-card"><div class="value value-total">${s.total}</div><div class="label">Total Requisitos</div></div>
@@ -174,6 +175,9 @@ document.getElementById('btn-fix').addEventListener('click', runFixPipeline);
 document.getElementById('btn-close-modal').addEventListener('click', () => {
   document.getElementById('fix-modal').style.display = 'none';
 });
+document.getElementById('btn-download-non-compliance').addEventListener('click', () => {
+  window.open('/api/compare/non-compliance-pdf', '_blank');
+});
 
 async function runFixPipeline() {
   if (!latestNormativeDocName || !latestProgramDocName) {
@@ -184,7 +188,7 @@ async function runFixPipeline() {
   const modal = document.getElementById('fix-modal');
   modal.style.display = 'flex';
 
-  const steps = ['start', 'normative', 'program', 'compliance', 'fixer', 'pdf'];
+  const steps = ['start', 'normative', 'program', 'compliance', 'validator', 'fixer', 'pdf'];
   steps.forEach(s => {
     const el = document.getElementById('step-' + s);
     if (el) {
@@ -278,8 +282,12 @@ function handleProgressUpdate(update) {
     updateStep('program', 'success');
     updateStep('compliance', 'active');
     if (update.isFinal) updateStep('compliance', 'success');
-  } else if (update.step === 'ProgramFixerAgent') {
+  } else if (update.step === 'ComplianceValidatorAgent') {
     updateStep('compliance', 'success');
+    updateStep('validator', 'active');
+    if (update.isFinal) updateStep('validator', 'success');
+  } else if (update.step === 'ProgramFixerAgent') {
+    updateStep('validator', 'success');
     updateStep('fixer', 'active');
     if (update.isFinal) {
       updateStep('fixer', 'success');

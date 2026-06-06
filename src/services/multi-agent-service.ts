@@ -6,7 +6,7 @@ import { createLogger } from './logger';
 const logger = createLogger();
 
 export interface AgentStepUpdate {
-  step: 'NormativeOntologyAgent' | 'ProgramOntologyAgent' | 'ComplianceGapsAgent' | 'StructureAnalyzerAgent' | 'ProgramFixerAgent';
+  step: 'NormativeOntologyAgent' | 'ProgramOntologyAgent' | 'ComplianceGapsAgent' | 'ComplianceValidatorAgent' | 'StructureAnalyzerAgent' | 'ProgramFixerAgent';
   content: string;
   isFinal: boolean;
 }
@@ -111,6 +111,58 @@ export async function* runCorrectionPipeline(
     }
   });
 
+  const complianceValidatorAgent = new LlmAgent({
+    name: 'ComplianceValidatorAgent',
+    description: 'Valida semánticamente y descarta brechas de cumplimiento falsas (declaraciones negativas válidas o no aplicabilidad).',
+    model: gemini,
+    outputKey: 'app:validated_compliance_analysis',
+    instruction: async (context) => {
+      const normDoc = context.state.get<string>('app:normative_doc');
+      const progDoc = context.state.get<string>('app:program_doc');
+      logger.info('ComplianceValidatorAgent', `Validating compliance gaps between ${progDoc} and ${normDoc}`);
+
+      const originalText = await graphBuilder.getProgramText(progDoc || '');
+      const complianceAnalysis = context.state.get<string>('app:compliance_analysis') || '';
+
+      return `Eres el Agente Validador de Cumplimiento Semántico. Tu rol es analizar críticamente las brechas de cumplimiento detectadas y el texto original del programa para filtrar falsos positivos o recomendaciones redundantes e innecesarias.
+
+INFORMACIÓN DEL PIPELINE:
+- Brechas de Cumplimiento Detectadas:
+${complianceAnalysis}
+
+- Texto Original del Programa:
+${originalText}
+
+DIRECTIVAS DE EVALUACIÓN SEMÁNTICA Y HOLÍSTICA:
+1. Evalúa cada brecha reportada comparándola con el texto original del programa.
+2. Identifica "Declaraciones Negativas Válidas": Si una brecha reclama que falta regular o detallar un aspecto (por ejemplo, procedimientos de dispensa académica, exenciones de asistencia, requerimiento de software pago, laboratorios específicos, etc.) y en el programa el docente indica explícitamente que NO aplica, que NO se concede, o que NINGUNA actividad está sujeta a ello (ej: "no se concede dispensa académica en ningún caso", "todas las actividades son obligatorias", "no hay software requerido"), esto constituye una regulación completa y válida para la materia. Debes declarar esta brecha como un FALSO POSITIVO y removerla/descartarla para que no se intente generar una corrección innecesaria.
+3. Identifica "No Aplicabilidad por Naturaleza": Si un requisito normativo de infraestructura o equipamiento no aplica al tipo de asignatura (por ejemplo, laboratorios físicos para una materia puramente teórica), clasifica la brecha como FALSO POSITIVO y remuévela.
+4. Conserva únicamente las BRECHAS REALES donde efectivamente falte información que la norma exige obligatoriamente y que no haya sido abordada en absoluto en el programa.
+
+Devuelve un JSON que contenga la lista final depurada de brechas reales de cumplimiento. No incluyas markdown, solo el JSON puro con esta estructura:
+{
+  "validatedGaps": [
+    {
+      "id": "ID del requisito",
+      "category": "Categoría",
+      "requirement": "Texto del requisito",
+      "description": "Descripción",
+      "status": "partial | missing",
+      "evidence": "Evidencia hallada en el programa",
+      "suggestion": "Sugerencia pedagógica de adecuación"
+    }
+  ],
+  "excludedGaps": [
+    {
+      "id": "ID del requisito",
+      "requirement": "Texto del requisito",
+      "reason": "Justificación detallada de por qué se considera falso positivo o no aplica"
+    }
+  ]
+}`;
+    }
+  });
+
   const fixerAgent = new LlmAgent({
     name: 'ProgramFixerAgent',
     description: 'Modifies the original program document to cover all gaps.',
@@ -124,10 +176,10 @@ export async function* runCorrectionPipeline(
       
       // Retrieve intermediate analyses from state
       const normativeAnalysis = context.state.get<string>('app:normative_analysis') || '';
-      const complianceAnalysis = context.state.get<string>('app:compliance_analysis') || '';
+      const validatedComplianceAnalysis = context.state.get<string>('app:validated_compliance_analysis') || '';
       const originalStructure = context.state.get<string>('app:original_structure') || '';
       
-      return `Eres el agente especialista en adecuación curricular de planes de estudio universitarios. Tu tarea es generar un listado ESTRUCTURADO de correcciones que deben aplicarse al programa de estudios original para cubrir las brechas normativas detectadas.
+      return `Eres el agente especialista en adecuación curricular de planes de estudio universitarios. Tu tarea es generar un listado ESTRUCTURADO de correcciones que deben aplicarse al programa de estudios original para cubrir únicamente las brechas normativas REALES y VALIDADAS.
 
       IMPORTANTE: NO reescribas el documento completo. El documento original se preservará tal cual está. Solo necesitás listar las correcciones puntuales.
       
@@ -135,8 +187,8 @@ export async function* runCorrectionPipeline(
       - Análisis de Requisitos Normativos:
       ${normativeAnalysis}
       
-      - Brechas de Cumplimiento y Sugerencias de Corrección:
-      ${complianceAnalysis}
+      - Brechas de Cumplimiento Validadas (¡SOLO debes corregir estas!):
+      ${validatedComplianceAnalysis}
       
       - Estructura Original Detectada (JSON):
       ${originalStructure}
@@ -162,6 +214,7 @@ export async function* runCorrectionPipeline(
       - Evitá proponer nuevas asignaturas obligatorias.
       - Enriquecé los espacios de integración curricular existentes (proyectos integradores, trabajos finales).
       - Cada corrección debe ser autónoma y aplicable directamente sobre el documento original.
+      - Si no hay brechas reales en validatedComplianceAnalysis (es decir, validatedGaps está vacío), devuelve un array "corrections" vacío: {"corrections": []}. NO inventes correcciones si no hay brechas reales validadas.
       
       Generá únicamente el JSON de correcciones.`;
     }
@@ -170,7 +223,7 @@ export async function* runCorrectionPipeline(
   // 3. Chain agents sequentially
   const pipeline = new SequentialAgent({
     name: 'CorrectionPipeline',
-    subAgents: [normativeAgent, programAgent, structureAnalyzerAgent, complianceAgent, fixerAgent]
+    subAgents: [normativeAgent, programAgent, structureAnalyzerAgent, complianceAgent, complianceValidatorAgent, fixerAgent]
   });
 
   // 4. Run pipeline

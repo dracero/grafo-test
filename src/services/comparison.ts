@@ -352,7 +352,9 @@ Para CADA requisito normativo (hay exactamente ${batch.length}), determina:
   * Si está "missing": explica detalladamente por qué no se encuentra en el programa (por ejemplo, si el requisito es una competencia docente general o de nivel institucional y por ende no aplica a una materia específica de física, indícalo claramente en lugar de dar una respuesta genérica).
 - suggestion: recomendación pedagógica específica y aplicable para incorporar este aspecto al programa, o "Ninguna" si ya está completamente cubierto o si no aplica a la materia.
 
-Usa razonamiento semántico avanzado: un requisito puede estar cubierto conceptualmente aunque se exprese con terminología diferente. Evita dar respuestas genéricas como "revisar manualmente".
+REGLAS DE EVALUACIÓN SEMÁNTICA Y CONDICIONAL:
+1. Usa razonamiento semántico avanzado: un requisito puede estar cubierto conceptualmente aunque se exprese con terminología diferente. Evita dar respuestas genéricas como "revisar manualmente".
+2. DECLARACIONES NEGATIVAS O DE NO APLICABILIDAD: Si un requisito exige especificar, detallar o regular cierto aspecto (por ejemplo: detallar actividades dispensables, procedimientos de exención, uso de softwares, requisitos de laboratorios específicos, etc.) y la guía docente/programa indica de manera explícita que NO aplica, que NO se concede, o que NINGUNA actividad/recurso está sujeto a ello (por ejemplo: "la dispensa no se aplica en ningún caso", "todas las actividades son obligatorias y no dispensables", "no hay software requerido", "no hay correlatividades"), este requisito se debe evaluar como "covered" (cubierto) y NO como "missing" o "partial". La declaración explícita de inexistencia o no aplicabilidad del aspecto es en sí misma una especificación completa y válida de sus condiciones, siempre que no contradiga una prohibición explícita de la norma.
 
 Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
 
