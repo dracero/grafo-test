@@ -1,5 +1,5 @@
 import { LlmAgent, SequentialAgent, InMemoryRunner, stringifyContent, isFinalResponse } from '@google/adk';
-import { GeminiLlm } from './gemini-llm';
+import { getLlmProvider } from './llm-provider';
 import { KnowledgeGraphBuilderImpl } from './knowledge-graph-builder';
 import { createLogger } from './logger';
 
@@ -14,18 +14,19 @@ export interface AgentStepUpdate {
 export async function* runCorrectionPipeline(
   normativeName: string,
   programName: string,
-  graphBuilder: KnowledgeGraphBuilderImpl
+  graphBuilder: KnowledgeGraphBuilderImpl,
+  provider?: string
 ): AsyncGenerator<AgentStepUpdate, void, unknown> {
-  logger.info('MultiAgentService', `Starting correction pipeline: ${programName} using ${normativeName}`);
+  logger.info('MultiAgentService', `Starting correction pipeline: ${programName} using ${normativeName} with provider: ${provider || 'default'}`);
 
-  // 1. Initialize Gemini LLM
-  const gemini = new GeminiLlm();
+  // 1. Initialize LLM
+  const model = getLlmProvider(provider);
 
   // 2. Define specialized agents with dynamic instruction providers
   const normativeAgent = new LlmAgent({
     name: 'NormativeOntologyAgent',
     description: 'Reads the normative document ontology from Neo4j.',
-    model: gemini,
+    model,
     outputKey: 'app:normative_analysis',
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
@@ -44,7 +45,7 @@ export async function* runCorrectionPipeline(
   const programAgent = new LlmAgent({
     name: 'ProgramOntologyAgent',
     description: 'Reads the syllabus/program ontology from Neo4j.',
-    model: gemini,
+    model,
     outputKey: 'app:program_analysis',
     instruction: async (context) => {
       const progDoc = context.state.get<string>('app:program_doc');
@@ -63,7 +64,7 @@ export async function* runCorrectionPipeline(
   const structureAnalyzerAgent = new LlmAgent({
     name: 'StructureAnalyzerAgent',
     description: 'Analyzes the original PDF structure and returns a JSON representation.',
-    model: gemini,
+    model,
     outputKey: 'app:original_structure',
     instruction: async (context) => {
       const progDoc = context.state.get<string>('app:program_doc');
@@ -82,7 +83,7 @@ export async function* runCorrectionPipeline(
   const complianceAgent = new LlmAgent({
     name: 'ComplianceGapsAgent',
     description: 'Reads compliance gaps (partial/missing items) from Neo4j.',
-    model: gemini,
+    model,
     outputKey: 'app:compliance_analysis',
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
@@ -114,7 +115,7 @@ export async function* runCorrectionPipeline(
   const complianceValidatorAgent = new LlmAgent({
     name: 'ComplianceValidatorAgent',
     description: 'Valida semánticamente y descarta brechas de cumplimiento falsas (declaraciones negativas válidas o no aplicabilidad).',
-    model: gemini,
+    model,
     outputKey: 'app:validated_compliance_analysis',
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
@@ -166,7 +167,7 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
   const fixerAgent = new LlmAgent({
     name: 'ProgramFixerAgent',
     description: 'Modifies the original program document to cover all gaps.',
-    model: gemini,
+    model,
     outputKey: 'app:corrected_program',
     instruction: async (context) => {
       const progDoc = context.state.get<string>('app:program_doc');

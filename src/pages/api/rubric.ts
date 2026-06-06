@@ -138,9 +138,11 @@ function parseRubricResponse(raw: string): any {
 
 async function extractSchemaAspects(
   text: string,
-  config: any
+  config: any,
+  provider?: string
 ): Promise<Array<{ id: string; aspect: string; description: string; category: string }>> {
-  const ai = genkit({ plugins: [googleAI({ apiKey: config.google.apiKey })] });
+  const isGroq = (provider || '').toLowerCase().trim() === 'groq';
+  const limit = isGroq ? 20_000 : 100_000;
 
   const prompt = `Analiza el siguiente documento que define el esquema de evaluación (estructura / aspectos que debe cubrir una guía docente).
 
@@ -156,15 +158,55 @@ Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
 {"aspects": [{"id": "ASP-001", "aspect": "...", "description": "...", "category": "..."}]}
 
 DOCUMENTO DE ESQUEMA DE EVALUACIÓN:
-${text.substring(0, 100000)}`;
+${text.substring(0, limit)}`;
 
   const response = await retryWithBackoff(
-    async () => ai.generate({
-      model: 'googleai/gemini-2.5-flash',
-      prompt,
-      output: { format: 'text' },
-      config: { maxOutputTokens: 32_768 },
-    }),
+    async () => {
+      if (isGroq) {
+        const apiKey = process.env.GROQ_API_KEY || '';
+        if (!apiKey) {
+          throw new Error('GROQ_API_KEY is not defined in the environment.');
+        }
+        logger.info('RubricAPI', 'Calling Groq API via fetch for extractSchemaAspects...');
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.2,
+            max_tokens: 4096,
+          })
+        });
+        
+        if (res.status === 413 || res.status === 429) {
+          logger.warn('RubricAPI', `Groq rate/context limit hit (status ${res.status}). Waiting 30 seconds before retrying...`);
+          await new Promise(resolve => setTimeout(resolve, 30000));
+          throw new Error(`Groq rate limit (${res.status}) hit in rubric extraction, retrying.`);
+        }
+        
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Groq API returned error status ${res.status}: ${errText}`);
+        }
+        const json = await res.json() as any;
+        const content = json.choices?.[0]?.message?.content || '';
+        return { text: content };
+      } else {
+        const ai = genkit({ plugins: [googleAI({ apiKey: config.google.apiKey })] });
+        return ai.generate({
+          model: 'googleai/gemini-3.5-flash',
+          prompt,
+          output: { format: 'text' },
+          config: { maxOutputTokens: 32_768 },
+        });
+      }
+    },
     {
       maxRetries: 3,
       initialDelayMs: 10_000,
@@ -194,6 +236,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     const normFile = formData.get('normative') as File | null;
     const schemaFile = formData.get('evaluationSchema') as File | null;
+    const provider = formData.get('provider') as string | null || undefined;
 
     if (!normFile || !schemaFile) {
       const missing = [];
@@ -231,8 +274,8 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     // ── Step 2: Extract & store normative ontology ──
-    logger.info('Rubric', 'Step 2: Extracting normative ontology...');
-    const ontology = await comparisonService.extractOntology(normPdf.text);
+    logger.info('Rubric', `Step 2: Extracting normative ontology using provider: ${provider || 'default'}...`);
+    const ontology = await comparisonService.extractOntology(normPdf.text, provider);
     logger.info('Rubric', `Ontology extracted: ${ontology.length} items`);
 
     // Store normative document + ontology items in Neo4j
@@ -288,16 +331,16 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     // ── Step 3: Extract & store evaluation schema ──
-    logger.info('Rubric', 'Step 3: Extracting evaluation schema...');
-    const schemaAspects = await extractSchemaAspects(schemaPdf.text, config);
+    logger.info('Rubric', `Step 3: Extracting evaluation schema using provider: ${provider || 'default'}...`);
+    const schemaAspects = await extractSchemaAspects(schemaPdf.text, config, provider);
     logger.info('Rubric', `Schema aspects extracted: ${schemaAspects.length}`);
     await graphBuilder.saveEvaluationSchema(schemaFile.name, schemaAspects);
 
     // ── Step 4: Run multi-agent pipeline ──
-    logger.info('Rubric', 'Step 4: Running multi-agent rubric pipeline...');
+    logger.info('Rubric', `Step 4: Running multi-agent rubric pipeline with provider: ${provider || 'default'}...`);
     let rubricRaw: any = null;
 
-    for await (const update of runRubricPipeline(normFile.name, schemaFile.name, graphBuilder)) {
+    for await (const update of runRubricPipeline(normFile.name, schemaFile.name, graphBuilder, provider)) {
       logger.info('Rubric', `[${update.step}] final=${update.isFinal}, content length=${update.content.length}`);
 
       if (update.step === 'RubricSynthesizerAgent' && update.isFinal) {

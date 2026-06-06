@@ -8,7 +8,7 @@ export class GeminiLlm extends BaseLlm {
   private defaultModel: string;
 
   constructor({ model, apiKey }: { model?: string; apiKey?: string } = {}) {
-    const selectedModel = model || 'gemini-2.5-flash';
+    const selectedModel = model || 'gemini-3.5-flash';
     super({ model: selectedModel });
     this.apiKey = apiKey || process.env.GOOGLE_API_KEY || '';
     this.defaultModel = selectedModel;

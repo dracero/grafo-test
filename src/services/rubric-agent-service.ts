@@ -18,7 +18,7 @@
  */
 
 import { LlmAgent, SequentialAgent, InMemoryRunner, stringifyContent, isFinalResponse } from '@google/adk';
-import { GeminiLlm } from './gemini-llm';
+import { getLlmProvider } from './llm-provider';
 import { KnowledgeGraphBuilderImpl } from './knowledge-graph-builder';
 import { createLogger } from './logger';
 
@@ -40,20 +40,21 @@ export interface RubricAgentStepUpdate {
 export async function* runRubricPipeline(
   normativeName: string,
   schemaName: string,
-  graphBuilder: KnowledgeGraphBuilderImpl
+  graphBuilder: KnowledgeGraphBuilderImpl,
+  provider?: string
 ): AsyncGenerator<RubricAgentStepUpdate, void, unknown> {
   logger.info(
     'RubricAgentService',
-    `Starting rubric pipeline: normative=${normativeName}, schema=${schemaName}`
+    `Starting rubric pipeline: normative=${normativeName}, schema=${schemaName} with provider=${provider || 'default'}`
   );
 
-  const gemini = new GeminiLlm();
+  const model = getLlmProvider(provider);
 
   // ── Agent 1: Ontology Analyzer ──────────────────────────────────────────
   const ontologyAnalyzer = new LlmAgent({
     name: 'OntologyAnalyzerAgent',
     description: 'Examines the normative ontology from Neo4j and produces a structured analysis of all requirements.',
-    model: gemini,
+    model,
     outputKey: 'app:ontology_analysis',
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc') || normativeName;
@@ -98,7 +99,7 @@ Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
   const schemaAdjuster = new LlmAgent({
     name: 'SchemaOntologyAdjusterAgent',
     description: 'Adjusts the normative ontology using the evaluation schema to determine what aspects to include in the rubric.',
-    model: gemini,
+    model,
     outputKey: 'app:adjusted_ontology',
     instruction: async (context) => {
       logger.info('SchemaOntologyAdjusterAgent', 'Fetching evaluation schema and ontology analysis');
@@ -174,7 +175,7 @@ Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
   const rubricSynthesizer = new LlmAgent({
     name: 'RubricSynthesizerAgent',
     description: 'Synthesizes the final rubric from the adjusted ontology, covering only schema aspects.',
-    model: gemini,
+    model,
     outputKey: 'app:rubric_result',
     instruction: async (context) => {
       const ontologyAnalysis = context.state.get<string>('app:ontology_analysis') || '';

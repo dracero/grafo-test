@@ -61,10 +61,12 @@ async function runComparison() {
   document.getElementById('results-section').classList.remove('visible');
 
   try {
+    const provider = document.getElementById('model-provider')?.value || 'gemini';
     const formData = new FormData();
     formData.append('normative', normativeFile);
     formData.append('program', programFile);
     formData.append('clearPrevious', document.getElementById('clear-previous').checked);
+    formData.append('provider', provider);
 
     const res = await fetch('/api/compare', { method: 'POST', body: formData });
     const json = await res.json();
@@ -199,13 +201,22 @@ async function runFixPipeline() {
 
   document.getElementById('btn-download-pdf').style.display = 'none';
 
+  const provider = document.getElementById('model-provider')?.value || 'gemini';
+  
+  // Set the dynamic label inside the modal step text for step-fixer
+  const fixerTextEl = document.querySelector('#step-fixer .step-text');
+  if (fixerTextEl) {
+    fixerTextEl.textContent = `Agente Corrector: Modificando programa con ${provider === 'groq' ? 'Groq' : 'Gemini'}...`;
+  }
+
   try {
     const res = await fetch('/api/fix', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         normativeDocument: latestNormativeDocName,
-        programDocument: latestProgramDocName
+        programDocument: latestProgramDocName,
+        provider: provider
       })
     });
 

@@ -72,9 +72,11 @@ async function generateRubric() {
   try {
     await sleep(500);
 
+    const provider = document.getElementById('model-provider')?.value || 'gemini';
     const formData = new FormData();
     formData.append('normative', normativeFile);
     formData.append('evaluationSchema', schemaFile);
+    formData.append('provider', provider);
 
     // Step 2: Extracting
     updateProgressStatus('Extrayendo ontología normativa y esquema de evaluación...');

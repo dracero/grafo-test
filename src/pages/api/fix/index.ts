@@ -14,7 +14,7 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     const { graphBuilder } = await getServices();
     const body = await request.json();
-    const { normativeDocument, programDocument } = body;
+    const { normativeDocument, programDocument, provider } = body;
 
     if (!normativeDocument || !programDocument) {
       return new Response(JSON.stringify({ success: false, error: 'Se requieren "normativeDocument" y "programDocument"' }), {
@@ -23,14 +23,14 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    logger.info('API', `Starting fix pipeline: ${programDocument} against ${normativeDocument}`);
+    logger.info('API', `Starting fix pipeline: ${programDocument} against ${normativeDocument} using provider: ${provider || 'default'}`);
 
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder);
+          const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder, provider);
           let correctedText = '';
 
           for await (const update of pipeline) {

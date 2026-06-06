@@ -130,7 +130,7 @@ export class GenkitEngineImpl implements GenkitEngine {
         const prompt = `Analyze the following text and extract key entities (people, organizations, locations, concepts, dates) and the relationships between them. Ensure that 'source' and 'target' in relationships precisely match the 'name' of the extracted entities. Normalize relationship types to clear, capitalized verbs (e.g., "WORKS_AT", "LOCATED_IN").\n\nText:\n${safeText}`;
 
         const response = await this.ai!.generate({
-          model: 'googleai/gemini-2.5-flash',
+          model: 'googleai/gemini-3.5-flash',
           prompt: prompt,
           output: {
             format: 'json',

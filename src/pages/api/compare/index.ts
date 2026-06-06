@@ -32,6 +32,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     const normFile = formData.get('normative') as File | null;
     const progFile = formData.get('program') as File | null;
+    const provider = formData.get('provider') as string | null || undefined;
 
     if (!normFile || !progFile) {
       return new Response(JSON.stringify({ success: false, error: 'Se requieren dos archivos: "normative" y "program"' }), {
@@ -40,7 +41,7 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    logger.info('Comparison', `Comparing: ${normFile.name} vs ${progFile.name}`);
+    logger.info('Comparison', `Comparing: ${normFile.name} vs ${progFile.name} using provider: ${provider || 'default'}`);
 
     // Read file buffers
     const normBuffer = Buffer.from(await normFile.arrayBuffer());
@@ -68,7 +69,7 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     const clearPrevious = formData.get('clearPrevious') === 'true';
-    const report = await comparisonService.fullComparison(normPdf.text, progPdf.text, normFile.name, progFile.name);
+    const report = await comparisonService.fullComparison(normPdf.text, progPdf.text, normFile.name, progFile.name, provider);
 
     try {
       if (clearPrevious) {

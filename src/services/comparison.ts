@@ -31,7 +31,7 @@ setGlobalDispatcher(new Agent({
 const logger = createLogger();
 
 // ─── Model constants ───────────────────────────────────────────────────────
-const MODEL_FLASH = 'googleai/gemini-2.5-flash';
+const MODEL_FLASH = 'googleai/gemini-3.5-flash';
 
 // 65 536 is the maximum output token limit for Gemini 2.5 Flash.
 const MAX_OUTPUT_TOKENS = 65_536;
@@ -179,12 +179,51 @@ export class ComparisonService {
     });
   }
 
-  private async generateWithRetry(options: any, operationName: string): Promise<any> {
+  private async generateWithRetry(options: any, operationName: string, provider?: string): Promise<any> {
+    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
     return retryWithBackoff(
-      async () => this.ai.generate(options),
+      async () => {
+        if (isGroq) {
+          const apiKey = process.env.GROQ_API_KEY || '';
+          if (!apiKey) {
+            throw new Error('GROQ_API_KEY is not defined in the environment.');
+          }
+          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'llama-3.3-70b-versatile',
+              messages: [
+                { role: 'user', content: options.prompt }
+              ],
+              temperature: options.config?.temperature ?? 0.2,
+              max_tokens: options.config?.maxOutputTokens ?? 4096,
+            })
+          });
+          
+          if (response.status === 413 || response.status === 429) {
+            logger.warn('Comparison', `Groq rate/context limit hit (status ${response.status}). Waiting 30 seconds before retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 30000));
+            throw new Error(`Groq rate limit (${response.status}) hit, retrying after delay.`);
+          }
+          
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Groq API returned error status ${response.status}: ${errText}`);
+          }
+          const json = await response.json() as any;
+          const content = json.choices?.[0]?.message?.content || '';
+          return { text: content };
+        } else {
+          return this.ai.generate(options);
+        }
+      },
       {
         maxRetries: 5,
-        initialDelayMs: 15_000,
+        initialDelayMs: isGroq ? 3000 : 15_000,
         maxDelayMs: 90_000,
         component: 'ComparisonService',
         operationName,
@@ -193,20 +232,24 @@ export class ComparisonService {
     );
   }
 
-  private safeText(text: string, label: string): string {
-    if (text.length <= MAX_CHARS_PER_DOC) return text;
+  private safeText(text: string, label: string, provider?: string): string {
+    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
+    const limit = isGroq ? 20_000 : MAX_CHARS_PER_DOC;
+    
+    if (text.length <= limit) return text;
     logger.warn(
       'Comparison',
-      `[${label}] Documento muy largo (${text.length} chars) — truncado a ${MAX_CHARS_PER_DOC} chars.`
+      `[${label}] Documento muy largo (${text.length} chars) para ${isGroq ? 'Groq' : 'Gemini'} — truncado a ${limit} chars.`
     );
-    return text.substring(0, MAX_CHARS_PER_DOC) + '\n\n[DOCUMENTO TRUNCADO — supera el límite de la API]';
+    return text.substring(0, limit) + `\n\n[DOCUMENTO TRUNCADO para cumplir con los límites de la API de ${isGroq ? 'Groq' : 'Gemini'}]`;
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
 
-  async extractOntology(normativeText: string): Promise<OntologyItem[]> {
-    logger.info('Comparison', 'Extrayendo ontología del documento normativo con Gemini 2.5 Flash…');
-    const safeText = this.safeText(normativeText, 'Normativo');
+  async extractOntology(normativeText: string, provider?: string): Promise<OntologyItem[]> {
+    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
+    logger.info('Comparison', `Extrayendo ontología del documento normativo con ${isGroq ? 'Groq Llama 3.3' : 'Gemini 2.5 Flash'}…`);
+    const safeText = this.safeText(normativeText, 'Normativo', provider);
 
     const prompt = `Eres un experto en análisis de documentos normativos educativos y acreditación universitaria.
 
@@ -233,12 +276,13 @@ ${safeText}`;
 
     const response = await this.generateWithRetry(
       {
-        model: MODEL_FLASH,
+        model: isGroq ? 'groq/llama-3.3-70b-versatile' : MODEL_FLASH,
         prompt,
         output: { format: 'text' },
-        config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+        config: { maxOutputTokens: isGroq ? 4096 : MAX_OUTPUT_TOKENS },
       },
-      'extractOntology'
+      'extractOntology',
+      provider
     );
 
     const rawText = response.text ?? '';
@@ -252,9 +296,10 @@ ${safeText}`;
     return items;
   }
 
-  async extractProgramOntology(programText: string): Promise<OntologyItem[]> {
-    logger.info('Comparison', 'Extrayendo ontología del programa con Gemini 2.5 Flash…');
-    const safeText = this.safeText(programText, 'Programa');
+  async extractProgramOntology(programText: string, provider?: string): Promise<OntologyItem[]> {
+    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
+    logger.info('Comparison', `Extrayendo ontología del programa con ${isGroq ? 'Groq Llama 3.3' : 'Gemini 2.5 Flash'}…`);
+    const safeText = this.safeText(programText, 'Programa', provider);
 
     const prompt = `Eres un experto en análisis de programas educativos universitarios (sílabos).
 
@@ -281,12 +326,13 @@ ${safeText}`;
 
     const response = await this.generateWithRetry(
       {
-        model: MODEL_FLASH,
+        model: isGroq ? 'groq/llama-3.3-70b-versatile' : MODEL_FLASH,
         prompt,
         output: { format: 'text' },
-        config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+        config: { maxOutputTokens: isGroq ? 4096 : MAX_OUTPUT_TOKENS },
       },
-      'extractProgramOntology'
+      'extractProgramOntology',
+      provider
     );
 
     const rawText = response.text ?? '';
@@ -302,11 +348,13 @@ ${safeText}`;
 
   async compareOntologies(
     normativeOntology: OntologyItem[],
-    programOntology: OntologyItem[]
+    programOntology: OntologyItem[],
+    provider?: string
   ): Promise<ComparisonResult[]> {
+    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
     logger.info(
       'Comparison',
-      `Comparando holísticamente en lotes: ${normativeOntology.length} normativos vs ${programOntology.length} del programa…`
+      `Comparando holísticamente en lotes con ${isGroq ? 'Groq Llama 3.3' : 'Gemini 2.5 Flash'}: ${normativeOntology.length} normativos vs ${programOntology.length} del programa…`
     );
 
     const BATCH_SIZE = 100;
@@ -380,12 +428,13 @@ ${programList}`;
 
       const response = await this.generateWithRetry(
         {
-          model: MODEL_FLASH,
+          model: isGroq ? 'groq/llama-3.3-70b-versatile' : MODEL_FLASH,
           prompt,
           output: { format: 'text' },
-          config: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+          config: { maxOutputTokens: isGroq ? 4096 : MAX_OUTPUT_TOKENS },
         },
-        `compareOntologies_batch_${Math.floor(i / BATCH_SIZE) + 1}`
+        `compareOntologies_batch_${Math.floor(i / BATCH_SIZE) + 1}`,
+        provider
       );
 
       const rawText = response.text ?? '';
@@ -472,14 +521,15 @@ ${programList}`;
     normativeText: string,
     programText: string,
     normativeName: string,
-    programName: string
+    programName: string,
+    provider?: string
   ): Promise<ComparisonReport> {
-    logger.info('Comparison', `Iniciando comparación: "${normativeName}" vs "${programName}"`);
+    logger.info('Comparison', `Iniciando comparación: "${normativeName}" vs "${programName}" con proveedor: ${provider || 'default'}`);
     logger.info('Comparison', `Normativo: ${normativeText.length} chars | Programa: ${programText.length} chars`);
 
-    const ontology        = await this.extractOntology(normativeText);
-    const programOntology = await this.extractProgramOntology(programText);
-    const results         = await this.compareOntologies(ontology, programOntology);
+    const ontology        = await this.extractOntology(normativeText, provider);
+    const programOntology = await this.extractProgramOntology(programText, provider);
+    const results         = await this.compareOntologies(ontology, programOntology, provider);
 
     const covered = results.filter((r) => r.status === 'covered').length;
     const partial = results.filter((r) => r.status === 'partial').length;
