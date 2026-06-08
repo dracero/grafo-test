@@ -1,0 +1,149 @@
+---
+import { t } from '../lib/i18n';
+
+const user = Astro.locals.user;
+const currentLang = Astro.locals.lang || 'es';
+---
+
+<div class="user-session-container">
+  {user && (
+    <div class="user-profile">
+      <span class="user-avatar" title={`${user.name} (${user.role})`}>
+        {user.name.charAt(0).toUpperCase()}
+      </span>
+      <div class="user-details">
+        <span class="user-name">{user.name}</span>
+        <span class="user-role">{t(user.role, currentLang)}</span>
+      </div>
+    </div>
+  )}
+
+  <div class="lang-selector">
+    <select id="lang-select" class="lang-select-box" aria-label="Idioma">
+      <option value="es" selected={currentLang === 'es'}>{t('lang_es', currentLang)}</option>
+      <option value="gl" selected={currentLang === 'gl'}>{t('lang_gl', currentLang)}</option>
+      <option value="en" selected={currentLang === 'en'}>{t('lang_en', currentLang)}</option>
+      <option value="pt" selected={currentLang === 'pt'}>{t('lang_pt', currentLang)}</option>
+    </select>
+  </div>
+
+  {user && (
+    <button id="btn-logout" class="btn-logout" title={t('logout', currentLang)}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+        <polyline points="16 17 21 12 16 7"></polyline>
+        <line x1="21" y1="12" x2="9" y2="12"></line>
+      </svg>
+    </button>
+  )}
+</div>
+
+<script>
+  // Client-side handlers using event delegation for deferred elements (Server Islands)
+  document.addEventListener('change', async (e) => {
+    const target = e.target as HTMLSelectElement;
+    if (target && target.id === 'lang-select') {
+      const newLang = target.value;
+      const res = await fetch('/api/auth/lang', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lang: newLang })
+      });
+      if (res.ok) {
+        window.location.reload();
+      }
+    }
+  });
+
+  document.addEventListener('click', async (e) => {
+    const target = e.target as HTMLElement;
+    const btnLogout = target.closest('#btn-logout');
+    if (btnLogout) {
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      if (res.ok) {
+        window.location.href = '/login';
+      }
+    }
+  });
+</script>
+
+<style>
+  .user-session-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .user-profile {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .user-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #8b5cf6, #06b6d4);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+
+  .user-details {
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+  }
+
+  .user-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #f3f4f6;
+    max-width: 100px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .user-role {
+    font-size: 0.65rem;
+    color: #9ca3af;
+  }
+
+  .lang-select-box {
+    background: rgba(0, 0, 0, 0.2);
+    color: #e5e7eb;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .btn-logout {
+    padding: 6px;
+    color: #ef4444;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+  }
+
+  .btn-logout:hover {
+    background: rgba(239, 68, 68, 0.1);
+  }
+</style>

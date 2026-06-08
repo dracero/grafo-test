@@ -3,14 +3,61 @@
  * Rubric Generator page — Multi-agent rubric generation.
  * Upload 2 PDFs (normative + evaluation schema) → multi-agent pipeline → preview → download PDF → clear.
  */
+import UserSessionIsland from '../components/UserSessionIsland.astro';
+import { t } from '../lib/i18n';
+
+const currentLang = Astro.locals.lang || 'es';
+
+// Local UI labels for self-contained translation block
+const rubricLabels = {
+  document: currentLang === 'en' ? 'Document' : currentLang === 'pt' ? 'Documento' : 'Documento',
+  criteria: currentLang === 'en' ? 'Criteria' : currentLang === 'pt' ? 'Critérios' : 'Criterios',
+  dimensions: currentLang === 'en' ? 'Dimensions' : currentLang === 'gl' ? 'Dimensións' : 'Dimensiones',
+  totalWeight: currentLang === 'en' ? 'Total Weight' : currentLang === 'pt' ? 'Peso Total' : 'Peso Total',
+  method: currentLang === 'en' ? 'Method' : currentLang === 'pt' ? 'Método' : 'Método',
+  multiAgent: currentLang === 'en' ? 'Multi-Agent' : currentLang === 'gl' ? 'Multi-Axente' : 'Multi-Agente',
+  nonEvaluableTitle: currentLang === 'en' ? '⚠️ Normative Aspects Not Included in the Rubric' : currentLang === 'gl' ? '⚠️ Aspectos Normativos Non Incluídos na Rúbrica' : currentLang === 'pt' ? '⚠️ Aspectos Normativos Não Incluídos na Rubrica' : '⚠️ Aspectos Normativos No Incluidos en la Rúbrica',
+  processing: currentLang === 'en' ? 'Processing documents...' : currentLang === 'gl' ? 'Procesando documentos...' : currentLang === 'pt' ? 'Processando documentos...' : 'Procesando documentos...'
+};
+
+// Client-side mapping
+const rubricTranslations = {
+  executing_pipeline: t('rubric.js.executing_pipeline', currentLang),
+  extracting_text: t('rubric.js.extracting_text', currentLang),
+  extracting_ontology: t('rubric.js.extracting_ontology', currentLang),
+  agent1_running: t('rubric.js.agent1_running', currentLang),
+  agent2_running: t('rubric.js.agent2_running', currentLang),
+  agent3_running: t('rubric.js.agent3_running', currentLang),
+  rendering_preview: t('rubric.js.rendering_preview', currentLang),
+  generate_success: t('rubric.js.generate_success', currentLang),
+  clear_db_confirm: t('rubric.js.clear_db_confirm', currentLang),
+  clearing: t('rubric.js.clearing', currentLang),
+  clear_success: t('rubric.js.clear_success', currentLang),
+  dimension: t('rubric.js.dimension', currentLang),
+  component: t('rubric.js.component', currentLang),
+  components: t('rubric.js.components', currentLang),
+  table_evaluated_component: t('rubric.js.table.evaluated_component', currentLang),
+  table_institutional_criterion: t('rubric.js.table.institutional_criterion', currentLang),
+  table_level_excellent: t('rubric.js.table.level_excellent', currentLang),
+  table_level_acceptable: t('rubric.js.table.level_acceptable', currentLang),
+  table_level_insufficient: t('rubric.js.table.level_insufficient', currentLang),
+  table_label_optimo: t('rubric.js.table.label_optimo', currentLang),
+  table_label_acceptable: t('rubric.js.table.label_acceptable', currentLang),
+  table_label_deficiente: t('rubric.js.table.label_deficiente', currentLang),
+  reason: t('rubric.js.reason', currentLang),
+  recommendation: t('rubric.js.recommendation', currentLang),
+  pts_max: t('rubric.js.pts_max', currentLang),
+  btn_generate: t('rubric.btn_generate', currentLang),
+  btn_clear: t('rubric.btn_clear', currentLang)
+};
 ---
 <!DOCTYPE html>
-<html lang="es">
+<html lang={currentLang}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Generador de rúbricas multi-agente para evaluación de guías docentes">
-  <title>Generador de Rúbricas Multi-Agente — Knowledge Graph</title>
+  <title>{t('rubric.title', currentLang)} — Knowledge Graph</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
@@ -29,314 +76,36 @@
       margin: 0 auto;
       padding: 32px 24px 60px;
     }
-
-    /* ── Hero ── */
-    .page-hero { text-align: center; margin-bottom: 40px; }
-    .page-hero h1 {
-      font-size: 2.2rem; font-weight: 800;
-      background: linear-gradient(135deg, #f59e0b, #ef4444, #8b5cf6);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      background-clip: text; margin-bottom: 10px;
-    }
-    .page-hero p {
-      color: var(--text-secondary); font-size: 1rem;
-      max-width: 750px; margin: 0 auto; line-height: 1.7;
-    }
-
-    /* ── Upload Cards Grid (2 cards) ── */
-    .upload-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 24px;
-      margin-bottom: 32px;
-      max-width: 860px;
-      margin-left: auto;
-      margin-right: auto;
-    }
-    .upload-card-rubric {
-      background: var(--bg-secondary);
-      border: 2px dashed var(--border-light);
-      border-radius: var(--radius-lg);
-      padding: 32px 28px;
-      text-align: center;
-      transition: all var(--transition-normal);
-      cursor: pointer;
-      position: relative;
-      overflow: hidden;
-    }
-    .upload-card-rubric:hover {
-      background: var(--bg-elevated);
-    }
-    .upload-card-rubric.has-file {
-      border-color: var(--accent-emerald);
-      border-style: solid;
-    }
-    .upload-card-rubric input[type="file"] {
-      display: block; margin: 14px auto 0; cursor: pointer;
-      font-size: 0.85rem; color: var(--text-secondary);
-      max-width: 100%;
-    }
-    .upload-card-rubric input[type="file"]::file-selector-button {
-      background: var(--bg-tertiary); border: 1px solid var(--border-light);
-      padding: 8px 16px; border-radius: var(--radius-sm);
-      color: var(--text-primary); font-weight: 600; cursor: pointer;
-      margin-right: 10px; transition: all var(--transition-fast);
-      font-size: 0.82rem;
-    }
-    .upload-card-rubric input[type="file"]::file-selector-button:hover {
-      background: var(--bg-elevated);
-    }
-    .upload-icon { font-size: 2.8rem; margin-bottom: 12px; display: block; }
-    .upload-card-rubric h3 {
-      font-size: 1.05rem; font-weight: 700;
-      color: var(--text-primary); margin-bottom: 6px;
-    }
-    .upload-card-rubric p {
-      font-size: 0.82rem; color: var(--text-muted); line-height: 1.5;
-    }
-    .upload-filename-rubric {
-      margin-top: 12px; font-size: 0.85rem; font-weight: 600;
-      color: var(--accent-emerald); display: none;
-      word-break: break-all;
-    }
-    .upload-card-rubric.has-file .upload-filename-rubric { display: block; }
-    .upload-card-rubric.has-file .upload-hint { display: none; }
-
-    /* Card-specific accent colors */
-    .upload-card-rubric[data-type="normative"]:hover { border-color: #f59e0b; box-shadow: 0 0 30px rgba(245, 158, 11, 0.08); }
-    .upload-card-rubric[data-type="normative"] input[type="file"]::file-selector-button:hover { border-color: #f59e0b; }
-    .upload-card-rubric[data-type="schema"]:hover { border-color: #8b5cf6; box-shadow: 0 0 30px rgba(139, 92, 246, 0.08); }
-    .upload-card-rubric[data-type="schema"] input[type="file"]::file-selector-button:hover { border-color: #8b5cf6; }
-
-    /* ── Actions ── */
-    .rubric-actions {
-      text-align: center; margin-bottom: 40px;
-      display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;
-    }
-    .btn-generate {
-      padding: 14px 36px; font-size: 1rem; border-radius: var(--radius-md);
-      background: linear-gradient(135deg, #f59e0b, #ef4444);
-      color: white; border: none; font-weight: 700;
-      font-family: var(--font-sans); cursor: pointer;
-      transition: all var(--transition-fast);
-      box-shadow: 0 0 24px rgba(245, 158, 11, 0.2);
-      display: inline-flex; align-items: center; gap: 8px;
-    }
-    .btn-generate:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 0 40px rgba(245, 158, 11, 0.35);
-    }
-    .btn-generate:disabled {
-      opacity: 0.4; cursor: not-allowed; transform: none;
-    }
-    .btn-download-rubric {
-      padding: 14px 36px; font-size: 1rem; border-radius: var(--radius-md);
-      background: linear-gradient(135deg, var(--accent-emerald), #059669);
-      color: white; border: none; font-weight: 700;
-      font-family: var(--font-sans); cursor: pointer;
-      transition: all var(--transition-fast);
-      box-shadow: 0 0 24px rgba(16, 185, 129, 0.2);
-      display: none; align-items: center; gap: 8px; text-decoration: none;
-    }
-    .btn-download-rubric:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 0 40px rgba(16, 185, 129, 0.35);
-    }
-    .btn-clear-rubric {
-      padding: 14px 28px; font-size: 1rem; border-radius: var(--radius-md);
-      background: linear-gradient(135deg, var(--accent-rose), #e11d48);
-      color: white; border: none; font-weight: 700;
-      font-family: var(--font-sans); cursor: pointer;
-      transition: all var(--transition-fast);
-      box-shadow: 0 0 24px rgba(244, 63, 94, 0.15);
-      display: none; align-items: center; gap: 8px;
-    }
-    .btn-clear-rubric:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 0 40px rgba(244, 63, 94, 0.3);
-    }
-
-    /* ── Progress ── */
-    .rubric-progress { display: none; margin-bottom: 40px; }
-    .rubric-progress.active { display: block; }
-    .progress-track { height: 6px; background: var(--bg-tertiary); border-radius: var(--radius-full); overflow: hidden; }
-    .progress-fill { height: 100%; background: linear-gradient(90deg, #f59e0b, #ef4444, #8b5cf6); border-radius: var(--radius-full); width: 40%; animation: progressSlide 1.5s ease-in-out infinite; }
-    @keyframes progressSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
-    .progress-status { font-size: 0.85rem; color: var(--text-secondary); text-align: center; margin-top: 12px; }
-
-    /* ── Steps (5 steps) ── */
-    .rubric-steps {
-      display: flex; justify-content: center; gap: 12px;
-      margin-bottom: 32px; flex-wrap: wrap;
-    }
-    .rubric-step {
-      display: flex; align-items: center; gap: 7px;
-      padding: 9px 16px; background: var(--bg-secondary);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      font-size: 0.8rem; color: var(--text-muted);
-      transition: all var(--transition-normal);
-    }
-    .rubric-step.active {
-      border-color: #f59e0b; color: #f59e0b;
-      box-shadow: 0 0 16px rgba(245, 158, 11, 0.15);
-    }
-    .rubric-step.done {
-      border-color: var(--accent-emerald); color: var(--accent-emerald);
-    }
-    .step-num {
-      width: 22px; height: 22px; border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 0.7rem; font-weight: 700;
-      background: var(--bg-tertiary); color: var(--text-muted);
-    }
-    .rubric-step.active .step-num { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
-    .rubric-step.done .step-num { background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); }
-
-    /* ── Multi-Agent Badge ── */
-    .multi-agent-badge {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(6, 182, 212, 0.12));
-      border: 1px solid rgba(139, 92, 246, 0.25);
-      border-radius: var(--radius-full);
-      padding: 5px 14px; font-size: 0.72rem; font-weight: 700;
-      color: #a78bfa; letter-spacing: 0.04em;
-      margin-bottom: 16px;
-    }
-    .multi-agent-badge::before { content: "🤖"; }
-
-    /* ── Rubric Preview ── */
-    .rubric-preview { display: none; }
-    .rubric-preview.visible { display: block; }
-
-    .rubric-info-banner {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 16px 22px; background: var(--bg-secondary);
-      border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
-      margin-bottom: 24px; flex-wrap: wrap; gap: 16px;
-    }
-    .rubric-meta { display: flex; gap: 20px; flex-wrap: wrap; }
-    .rubric-meta-item {
-      display: flex; flex-direction: column; gap: 2px;
-    }
-    .rubric-meta-label {
-      font-size: 0.62rem; text-transform: uppercase; font-weight: 700;
-      color: var(--text-muted); letter-spacing: 0.06em;
-    }
-    .rubric-meta-value {
-      font-size: 0.88rem; font-weight: 600; color: var(--text-primary);
-    }
-
-    /* ── Non-evaluable observations panel ── */
-    .observations-panel {
-      margin-bottom: 28px;
-      padding: 18px 22px;
-      background: linear-gradient(135deg, rgba(251, 191, 36, 0.06), rgba(245, 158, 11, 0.04));
-      border: 1px solid rgba(245, 158, 11, 0.2);
-      border-radius: var(--radius-md);
-    }
-    .observations-panel h3 {
-      font-size: 0.9rem; font-weight: 700; color: #fbbf24;
-      margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
-    }
-    .observation-item {
-      padding: 10px 14px;
-      border-left: 3px solid rgba(245, 158, 11, 0.4);
-      margin-bottom: 8px;
-      background: rgba(245, 158, 11, 0.04);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    }
-    .observation-item strong {
-      color: var(--text-primary); font-size: 0.82rem;
-    }
-    .observation-item p {
-      color: var(--text-secondary); font-size: 0.76rem; margin-top: 4px; line-height: 1.5;
-    }
-
-    /* Dimension sections */
-    .dimension-section { margin-bottom: 28px; }
-    .dimension-header {
-      display: flex; align-items: center; gap: 10px;
-      padding: 12px 18px; background: linear-gradient(135deg, #1e3a5f, #1e293b);
-      border-radius: var(--radius-md) var(--radius-md) 0 0;
-      border: 1px solid rgba(59, 130, 246, 0.2);
-    }
-    .dimension-icon { font-size: 1.2rem; }
-    .dimension-name { font-size: 0.95rem; font-weight: 700; color: #93c5fd; }
-    .dimension-count {
-      margin-left: auto; font-size: 0.72rem; font-weight: 600;
-      padding: 3px 10px; background: rgba(59, 130, 246, 0.15);
-      border-radius: var(--radius-full); color: #93c5fd;
-    }
-
-    /* Criteria table */
-    .criteria-table {
-      width: 100%; border-collapse: collapse;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-subtle);
-      border-top: none;
-      border-radius: 0 0 var(--radius-md) var(--radius-md);
-      overflow: hidden;
-    }
-    .criteria-table th {
-      padding: 10px 12px; font-size: 0.68rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.06em;
-      text-align: center; color: white;
-    }
-    .criteria-table th.th-criterion { background: #334155; text-align: left; width: 15%; }
-    .criteria-table th.th-criteria-desc { background: #475569; text-align: left; width: 20%; }
-    .criteria-table th.th-excellent { background: #16a34a; width: 22%; }
-    .criteria-table th.th-acceptable { background: #d97706; width: 22%; }
-    .criteria-table th.th-insufficient { background: #dc2626; width: 21%; }
-
-    .criteria-table td {
-      padding: 10px 12px; font-size: 0.78rem;
-      vertical-align: top; border-bottom: 1px solid var(--border-subtle);
-      line-height: 1.5;
-    }
-    .criteria-table tr:last-child td { border-bottom: none; }
-    .criteria-table tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
-    .criteria-table tr:hover { background: rgba(255, 255, 255, 0.04); }
-
-    .td-criterion { font-weight: 600; color: var(--text-primary); }
-    .td-excellent { color: #4ade80; }
-    .td-acceptable { color: #fbbf24; }
-    .td-insufficient { color: #f87171; }
-
-    /* ── Nav ── */
-    .nav-link {
-      font-size: 0.82rem; font-weight: 600; color: var(--text-secondary);
-      text-decoration: none; padding: 6px 14px; border-radius: var(--radius-sm);
-      transition: all var(--transition-fast); border: 1px solid var(--border-light);
-    }
-    .nav-link:hover { color: var(--text-primary); background: var(--bg-tertiary); }
-
-    @media (max-width: 768px) {
-      .upload-grid { grid-template-columns: 1fr; max-width: 420px; }
-      .rubric-steps { flex-direction: column; align-items: center; }
-      .criteria-table { font-size: 0.7rem; }
-      .criteria-table th, .criteria-table td { padding: 6px 8px; }
-    }
   </style>
+  <script is:inline define:vars={{ rubricTranslations }}>
+    window.AppTranslations = rubricTranslations;
+  </script>
 </head>
 <body>
   <!-- Top Bar -->
-  <header class="top-bar">
+  <header id="top-bar" class="top-bar">
     <div class="top-bar-left">
       <div class="logo">
         <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-          <circle cx="14" cy="14" r="12" stroke="url(#lg3)" stroke-width="2.5" fill="none"/>
-          <circle cx="8" cy="11" r="2.5" fill="#8B5CF6"/><circle cx="18" cy="9" r="2.5" fill="#06B6D4"/><circle cx="15" cy="19" r="2.5" fill="#F59E0B"/>
+          <circle cx="14" cy="14" r="12" stroke="url(#logo-grad-r)" stroke-width="2.5" fill="none"/>
+          <circle cx="8" cy="11" r="2.5" fill="#8B5CF6"/>
+          <circle cx="18" cy="9" r="2.5" fill="#06B6D4"/>
+          <circle cx="15" cy="19" r="2.5" fill="#F59E0B"/>
           <line x1="8" y1="11" x2="18" y2="9" stroke="#8B5CF680" stroke-width="1.5"/>
           <line x1="18" y1="9" x2="15" y2="19" stroke="#06B6D480" stroke-width="1.5"/>
-          <defs><linearGradient id="lg3" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#06B6D4"/></linearGradient></defs>
+          <line x1="8" y1="11" x2="15" y2="19" stroke="#F59E0B80" stroke-width="1.5"/>
+          <defs><linearGradient id="logo-grad-r" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#8B5CF6"/><stop offset="1" stop-color="#06B6D4"/></linearGradient></defs>
         </svg>
         <span class="logo-text">Knowledge Graph</span>
       </div>
     </div>
-    <div class="top-bar-right">
-      <a href="/compare" class="nav-link">📊 Comparar</a>
-      <a href="/" class="nav-link">← Volver al Grafo</a>
+    <div class="top-bar-right" style="display:flex; align-items:center; gap:12px;">
+      <a href="/compare" class="nav-link">📊 {t('nav.compare', currentLang)}</a>
+      <a href="/" class="nav-link">← {t('rubric.back_to_graph', currentLang)}</a>
+      
+      <UserSessionIsland server:defer>
+        <div slot="fallback" style="color: #9ca3af; font-size: 0.75rem; padding: 6px 12px; background: rgba(255,255,255,0.05); border-radius:8px; border:1px solid rgba(255,255,255,0.08); min-width: 120px; text-align: center;">{t('loading', currentLang)}</div>
+      </UserSessionIsland>
     </div>
   </header>
 
@@ -344,32 +113,32 @@
     <div class="rubric-content">
       <!-- Hero -->
       <div class="page-hero">
-        <span class="multi-agent-badge">Sistema Multi-Agente (3 Agentes)</span>
-        <h1>📝 Generador de Rúbricas</h1>
-        <p>Subí el documento normativo y el esquema de evaluación. El sistema multi-agente analizará la ontología, la ajustará con el esquema y generará una rúbrica integral cubriendo solo los aspectos evaluables.</p>
+        <span class="multi-agent-badge">{t('rubric.system_badge', currentLang)}</span>
+        <h1>📝 {t('rubric.title', currentLang)}</h1>
+        <p>{t('rubric.subtitle', currentLang)}</p>
       </div>
 
       <!-- Steps indicator (5 steps) -->
       <div class="rubric-steps" id="rubric-steps">
         <div class="rubric-step" id="step-upload">
           <span class="step-num">1</span>
-          <span>Subir PDFs</span>
+          <span>{t('rubric.step1', currentLang)}</span>
         </div>
         <div class="rubric-step" id="step-extract">
           <span class="step-num">2</span>
-          <span>Extraer Datos</span>
+          <span>{t('rubric.step2', currentLang)}</span>
         </div>
         <div class="rubric-step" id="step-ontology-agent">
           <span class="step-num">3</span>
-          <span>🤖 Analizar Ontología</span>
+          <span>{t('rubric.step3', currentLang)}</span>
         </div>
         <div class="rubric-step" id="step-adjuster-agent">
           <span class="step-num">4</span>
-          <span>🤖 Ajustar con Esquema</span>
+          <span>{t('rubric.step4', currentLang)}</span>
         </div>
         <div class="rubric-step" id="step-synthesizer-agent">
           <span class="step-num">5</span>
-          <span>🤖 Sintetizar Rúbrica</span>
+          <span>{t('rubric.step5', currentLang)}</span>
         </div>
       </div>
 
@@ -379,8 +148,8 @@
         <div class="upload-card-rubric" data-type="normative" id="card-normative-rubric">
           <input type="file" accept=".pdf" id="file-normative-rubric">
           <span class="upload-icon">📋</span>
-          <h3>Documento Normativo</h3>
-          <p class="upload-hint">Resolución, ordenanza o reglamento con los requisitos de la carrera o materia</p>
+          <h3>{t('rubric.normative_title', currentLang)}</h3>
+          <p class="upload-hint">{t('rubric.normative_desc', currentLang)}</p>
           <p class="upload-filename-rubric" id="name-normative-rubric"></p>
         </div>
 
@@ -388,8 +157,8 @@
         <div class="upload-card-rubric" data-type="schema" id="card-schema-rubric">
           <input type="file" accept=".pdf" id="file-schema-rubric">
           <span class="upload-icon">📐</span>
-          <h3>Esquema de Evaluación</h3>
-          <p class="upload-hint">Documento con los aspectos y estructura que la rúbrica debe cubrir</p>
+          <h3>{t('rubric.schema_title', currentLang)}</h3>
+          <p class="upload-hint">{t('rubric.schema_desc', currentLang)}</p>
           <p class="upload-filename-rubric" id="name-schema-rubric"></p>
         </div>
       </div>
@@ -397,7 +166,7 @@
       <!-- IA Provider Options -->
       <div class="options-container" style="display: flex; justify-content: center; margin-bottom: 24px;">
         <div style="display: flex; align-items: center; gap: 12px; justify-content: center; background: var(--bg-secondary); padding: 10px 20px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); box-shadow: var(--shadow-sm);">
-          <label for="model-provider" style="font-size: 0.88rem; color: var(--text-secondary); font-weight: 600;">Proveedor de IA:</label>
+          <label for="model-provider" style="font-size: 0.88rem; color: var(--text-secondary); font-weight: 600;">{t('rubric.ai_provider', currentLang)}</label>
           <select id="model-provider" style="background: var(--bg-primary); border: 1px solid var(--border-light); padding: 8px 14px; border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-sans); font-size: 0.88rem; cursor: pointer; outline: none; transition: border-color var(--transition-fast);">
             <option value="gemini">Google Gemini (Gemini 3.5 Flash)</option>
             <option value="groq">Groq (Llama 3.3 70B)</option>
@@ -408,20 +177,20 @@
       <!-- Actions -->
       <div class="rubric-actions" id="rubric-actions">
         <button id="btn-generate-rubric" class="btn-generate" disabled>
-          🤖 Generar Rúbrica Multi-Agente
+          {t('rubric.btn_generate', currentLang)}
         </button>
         <a id="btn-download-rubric" class="btn-download-rubric" download="rubrica.pdf">
-          📥 Descargar PDF
+          {t('rubric.btn_download', currentLang)}
         </a>
         <button id="btn-clear-rubric" class="btn-clear-rubric">
-          🗑️ Limpiar Todo
+          {t('rubric.btn_clear', currentLang)}
         </button>
       </div>
 
       <!-- Progress -->
       <div class="rubric-progress" id="rubric-progress">
         <div class="progress-track"><div class="progress-fill"></div></div>
-        <p class="progress-status" id="rubric-progress-status">Procesando documentos...</p>
+        <p class="progress-status" id="rubric-progress-status">{rubricLabels.processing}</p>
       </div>
 
       <!-- Rubric Preview -->
@@ -429,31 +198,31 @@
         <div class="rubric-info-banner">
           <div class="rubric-meta">
             <div class="rubric-meta-item">
-              <span class="rubric-meta-label">Documento</span>
+              <span class="rubric-meta-label">{rubricLabels.document}</span>
               <span class="rubric-meta-value" id="rubric-doc-name">—</span>
             </div>
             <div class="rubric-meta-item">
-              <span class="rubric-meta-label">Criterios</span>
+              <span class="rubric-meta-label">{rubricLabels.criteria}</span>
               <span class="rubric-meta-value" id="rubric-criteria-count">—</span>
             </div>
             <div class="rubric-meta-item">
-              <span class="rubric-meta-label">Dimensiones</span>
+              <span class="rubric-meta-label">{rubricLabels.dimensions}</span>
               <span class="rubric-meta-value" id="rubric-dimensions-count">—</span>
             </div>
             <div class="rubric-meta-item">
-              <span class="rubric-meta-label">Peso Total</span>
+              <span class="rubric-meta-label">{rubricLabels.totalWeight}</span>
               <span class="rubric-meta-value" id="rubric-total-weight">—</span>
             </div>
             <div class="rubric-meta-item">
-              <span class="rubric-meta-label">Método</span>
-              <span class="rubric-meta-value" style="color: #a78bfa;">🤖 Multi-Agente</span>
+              <span class="rubric-meta-label">{rubricLabels.method}</span>
+              <span class="rubric-meta-value" style="color: #a78bfa;">🤖 {rubricLabels.multiAgent}</span>
             </div>
           </div>
         </div>
 
         <!-- Non-evaluable observations -->
         <div class="observations-panel" id="observations-panel" style="display:none;">
-          <h3>⚠️ Aspectos Normativos No Incluidos en la Rúbrica</h3>
+          <h3>{rubricLabels.nonEvaluableTitle}</h3>
           <div id="observations-container"></div>
         </div>
 

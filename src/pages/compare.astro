@@ -3,14 +3,18 @@
  * Comparison page — normative document vs program
  * Converted from public/compare.html to Astro component
  */
+import UserSessionIsland from '../components/UserSessionIsland.astro';
+import { t } from '../lib/i18n';
+
+const currentLang = Astro.locals.lang || 'es';
 ---
 <!DOCTYPE html>
-<html lang="es">
+<html lang={currentLang}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Comparación de documento normativo con programa de materia">
-  <title>Comparación Normativa — Knowledge Graph</title>
+  <title>{t('nav.compare', currentLang)} — Knowledge Graph</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
@@ -146,9 +150,13 @@
         <span class="logo-text">Knowledge Graph</span>
       </div>
     </div>
-    <div class="top-bar-right">
-      <a href="/rubric" class="nav-link">📝 Rúbrica</a>
-      <a href="/" class="nav-link">← Volver al Grafo</a>
+    <div class="top-bar-right" style="display:flex; align-items:center; gap:12px;">
+      <a href="/rubric" class="nav-link">📝 {t('nav.rubric', currentLang)}</a>
+      <a href="/" class="nav-link">← {t('nav.reload', currentLang) === 'Recargar' ? 'Volver al Grafo' : 'Back to Graph'}</a>
+      
+      <UserSessionIsland server:defer>
+        <div slot="fallback" style="color: #9ca3af; font-size: 0.75rem; padding: 6px 12px; background: rgba(255,255,255,0.05); border-radius:8px; border:1px solid rgba(255,255,255,0.08); min-width: 120px; text-align: center;">{t('loading', currentLang)}</div>
+      </UserSessionIsland>
     </div>
   </header>
 

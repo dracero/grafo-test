@@ -3,9 +3,15 @@
  * Main Graph Explorer page
  * Converted from public/index.html to Astro component
  */
+import UserSessionIsland from '../components/UserSessionIsland.astro';
+import AdminPanel from '../components/AdminPanel.astro';
+import { t } from '../lib/i18n';
+
+const currentLang = Astro.locals.lang || 'es';
+const isAdmin = Astro.locals.user?.role === 'admin';
 ---
 <!DOCTYPE html>
-<html lang="es">
+<html lang={currentLang}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -51,36 +57,52 @@
       <div class="stats-bar" id="stats-bar">
         <div class="stat-item">
           <span class="stat-value" id="stat-nodes">—</span>
-          <span class="stat-label">Nodos</span>
+          <span class="stat-label">{t('nav.nodes', currentLang)}</span>
         </div>
         <div class="stat-divider"></div>
         <div class="stat-item">
           <span class="stat-value" id="stat-edges">—</span>
-          <span class="stat-label">Relaciones</span>
+          <span class="stat-label">{t('nav.relationships', currentLang)}</span>
         </div>
         <div class="stat-divider"></div>
         <div class="stat-item">
           <span class="stat-value" id="stat-docs">—</span>
-          <span class="stat-label">Documentos</span>
+          <span class="stat-label">{t('nav.documents', currentLang)}</span>
         </div>
       </div>
     </div>
     <div class="top-bar-right">
-      <a href="/rubric" class="btn btn-primary" style="text-decoration:none; background: linear-gradient(135deg, #f59e0b, #ef4444);" title="Generar rúbrica desde normativa">
+      <a href="/rubric" class="btn btn-primary" style="text-decoration:none; background: linear-gradient(135deg, #f59e0b, #ef4444);" title={t('nav.rubric', currentLang)}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5L9.5 0H4zm5.5 1.5L13 5h-2.5a1 1 0 0 1-1-1V1.5zM4.5 8a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5z"/></svg>
-        Rúbrica
+        {t('nav.rubric', currentLang)}
       </a>
-      <a href="/compare" class="btn btn-primary" style="text-decoration:none" title="Comparar normativa vs programa">
+      <a href="/compare" class="btn btn-primary" style="text-decoration:none" title={t('nav.compare', currentLang)}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5v-3zm8 0A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5v-3zm-8 8A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5v-3z"/></svg>
-        Comparar
+        {t('nav.compare', currentLang)}
       </a>
-      <button id="btn-clear-db" class="btn btn-danger" title="Borrar toda la base de datos">
+      <button id="btn-clear-db" class="btn btn-danger" title={t('nav.clear_db', currentLang)}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
-        Borrar BD
+        {t('nav.clear_db', currentLang)}
       </button>
-      <button id="btn-refresh" class="btn btn-ghost" title="Recargar grafo">
+      <button id="btn-refresh" class="btn btn-ghost" title={t('nav.reload', currentLang)}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.65 2.35A8 8 0 1 0 16 8h-2a6 6 0 1 1-1.76-4.24L10 6h6V0l-2.35 2.35z"/></svg>
       </button>
+
+      {isAdmin && (
+        <button id="btn-admin-panel" class="btn btn-ghost" title={t('admin_panel_title', currentLang)} style="border-color: rgba(139, 92, 246, 0.4); color: #c084fc;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span>{t('admin_panel_title', currentLang)}</span>
+        </button>
+      )}
+
+      <UserSessionIsland server:defer>
+        <div slot="fallback" style="color: #9ca3af; font-size: 0.75rem; padding: 6px 12px; background: rgba(255,255,255,0.05); border-radius:8px; border:1px solid rgba(255,255,255,0.08); min-width: 120px; text-align: center;">{t('loading', currentLang)}</div>
+      </UserSessionIsland>
     </div>
   </header>
 
@@ -89,38 +111,38 @@
     <div class="sidebar-section">
       <h3 class="sidebar-title">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.5h13l-5 6v5l-3 2v-7l-5-6z"/></svg>
-        Filtros
+        {t('sidebar.filters', currentLang)}
       </h3>
       <div class="filter-group" id="type-filters"></div>
       <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light);">
         <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--text-secondary); cursor:pointer;">
           <input type="checkbox" id="filter-concordant" style="width:16px; height:16px; accent-color:var(--accent-emerald);">
-          Solo concordantes (Cubiertos)
+          {t('sidebar.concordant_only', currentLang)}
         </label>
       </div>
     </div>
     <div class="sidebar-section">
       <h3 class="sidebar-title">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2zm9 0a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V2zM0 11a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-3z"/></svg>
-        Leyenda
+        {t('sidebar.legend', currentLang)}
       </h3>
       <div class="legend" id="legend"></div>
     </div>
     <div class="sidebar-section">
       <h3 class="sidebar-title">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5L9.5 0H4zm5.5 1.5L13 5h-2.5a1 1 0 0 1-1-1V1.5zM4.5 8a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5z"/></svg>
-        Documentos
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5L9.5 0H4zm5.5 1.5L13 5h-2.5a1 1 0 0 1-1-1V1.5zM4.5 8a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5z"/></svg>
+        {t('sidebar.documents', currentLang)}
       </h3>
       <div class="doc-list" id="doc-list"></div>
     </div>
     <div class="sidebar-section">
       <h3 class="sidebar-title">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 0a6.5 6.5 0 1 0 4.13 11.55l3.16 3.16a1 1 0 0 0 1.42-1.42l-3.16-3.16A6.5 6.5 0 0 0 6.5 0zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z"/></svg>
-        Búsqueda Semántica
+        {t('sidebar.semantic_search', currentLang)}
       </h3>
       <div class="search-box">
-        <input type="text" id="search-input" placeholder="Buscar en el grafo..." autocomplete="off">
-        <button id="btn-search" class="btn btn-sm btn-primary">Buscar</button>
+        <input type="text" id="search-input" placeholder={t('sidebar.search_placeholder', currentLang)} autocomplete="off">
+        <button id="btn-search" class="btn btn-sm btn-primary">{t('sidebar.search_btn', currentLang)}</button>
       </div>
       <div id="search-results" class="search-results"></div>
     </div>
@@ -143,8 +165,8 @@
         <line x1="25" y1="30" x2="55" y2="25" stroke="#6B728050" stroke-width="1" stroke-dasharray="3 3"/>
         <line x1="55" y1="25" x2="45" y2="52" stroke="#6B728050" stroke-width="1" stroke-dasharray="3 3"/>
       </svg>
-      <h3>No hay datos en el grafo</h3>
-      <p>Hacé clic en <strong>"Comparar"</strong> arriba a la derecha para subir la normativa y el programa de materia, y construir el grafo de conocimiento.</p>
+      <h3>{t('sidebar.empty_graph', currentLang)}</h3>
+      <p>{t('sidebar.empty_graph_hint', currentLang)}</p>
     </div>
   </main>
 
@@ -159,6 +181,125 @@
 
   <!-- Toast Notification -->
   <div id="toast-container" class="toast-container"></div>
+
+  {isAdmin && (
+    <div id="admin-modal" class="admin-modal hidden">
+      <div class="admin-modal-backdrop"></div>
+      <div class="admin-modal-content">
+        <button id="btn-close-admin" class="admin-modal-close-btn" aria-label="Cerrar">&times;</button>
+        <AdminPanel server:defer>
+          <div slot="fallback" style="color: #9ca3af; font-size: 0.85rem; padding: 1.5rem; text-align:center;">
+            {t('loading', currentLang)}
+          </div>
+        </AdminPanel>
+      </div>
+    </div>
+  )}
+
+  <style>
+    /* Admin Modal Styles */
+    .admin-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      transition: opacity 0.3s ease, visibility 0.3s ease;
+    }
+
+    .admin-modal.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .admin-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 15, 30, 0.75);
+      backdrop-filter: blur(8px);
+    }
+
+    .admin-modal-content {
+      position: relative;
+      width: 100%;
+      max-width: 900px;
+      max-height: 85vh;
+      background: rgba(17, 24, 39, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      overflow-y: auto;
+      z-index: 1;
+      animation: modalScaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      padding: 1.5rem;
+    }
+
+    @keyframes modalScaleIn {
+      from {
+        transform: scale(0.95);
+        opacity: 0;
+      }
+      to {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    .admin-modal-close-btn {
+      position: absolute;
+      top: 1.25rem;
+      right: 1.25rem;
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      font-size: 1.75rem;
+      cursor: pointer;
+      line-height: 1;
+      z-index: 10;
+      transition: color 0.2s;
+    }
+
+    .admin-modal-close-btn:hover {
+      color: #fff;
+    }
+  </style>
+
+  <script>
+    // Client script to manage Admin Panel Modal toggle
+    function initAdminModal() {
+      const btnAdmin = document.getElementById('btn-admin-panel');
+      const adminModal = document.getElementById('admin-modal');
+      const btnCloseAdmin = document.getElementById('btn-close-admin');
+      
+      if (btnAdmin && adminModal) {
+        btnAdmin.addEventListener('click', () => {
+          adminModal.classList.remove('hidden');
+        });
+      }
+      
+      if (btnCloseAdmin && adminModal) {
+        btnCloseAdmin.addEventListener('click', () => {
+          adminModal.classList.add('hidden');
+        });
+      }
+      
+      if (adminModal) {
+        const backdrop = adminModal.querySelector('.admin-modal-backdrop');
+        if (backdrop) {
+          backdrop.addEventListener('click', () => {
+            adminModal.classList.add('hidden');
+          });
+        }
+      }
+    }
+
+    // Initialize on page load and view transition swaps
+    initAdminModal();
+    document.addEventListener('astro:after-swap', initAdminModal);
+  </script>
 
   <script is:inline src="/app.js"></script>
 </body>

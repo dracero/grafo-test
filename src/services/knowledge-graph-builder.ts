@@ -851,6 +851,11 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         FOR (e:Entity) REQUIRE e.name IS UNIQUE
       `);
 
+      await session.run(`
+        CREATE CONSTRAINT user_email_unique IF NOT EXISTS
+        FOR (u:User) REQUIRE u.email IS UNIQUE
+      `);
+
       try {
         await session.run(`
           CREATE VECTOR INDEX entity_embeddings IF NOT EXISTS
@@ -902,6 +907,61 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
       maxDelayMs: 10000,
       logger: this.logger,
       component: 'KnowledgeGraph'
+    });
+  }
+
+  // ─── User Authentication Methods ──────────────────────────────────────────
+
+  async getUserByEmail(email: string): Promise<any | null> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (u:User {email: $email})
+        RETURN u.email AS email, u.name AS name, u.passwordHash AS passwordHash, u.role AS role, u.isActive AS isActive, u.createdAt AS createdAt
+      `, { email });
+      if (result.records.length === 0) return null;
+      const r = result.records[0];
+      return {
+        email: r.get('email'),
+        name: r.get('name'),
+        passwordHash: r.get('passwordHash'),
+        role: r.get('role'),
+        isActive: r.get('isActive'),
+        createdAt: r.get('createdAt')
+      };
+    });
+  }
+
+  async createUser(user: { email: string; name: string; passwordHash: string; role: string; isActive: boolean }): Promise<void> {
+    this.ensureConnected();
+    return this.executeWrite(async (session) => {
+      await session.run(`
+        CREATE (u:User {
+          email: $email,
+          name: $name,
+          passwordHash: $passwordHash,
+          role: $role,
+          isActive: $isActive,
+          createdAt: datetime()
+        })
+      `, {
+        email: user.email,
+        name: user.name,
+        passwordHash: user.passwordHash,
+        role: user.role,
+        isActive: user.isActive
+      });
+    });
+  }
+
+  async hasAnyUser(): Promise<boolean> {
+    this.ensureConnected();
+    return this.executeRead(async (session) => {
+      const result = await session.run(`
+        MATCH (u:User)
+        RETURN count(u) > 0 AS hasUsers
+      `);
+      return result.records[0]?.get('hasUsers') || false;
     });
   }
 }

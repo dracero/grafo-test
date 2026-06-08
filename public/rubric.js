@@ -5,6 +5,11 @@
  * non-evaluable observations, PDF download, and clear.
  */
 
+// Helper function to translate keys using injected translations
+function t(key, fallback) {
+  return (window.AppTranslations && window.AppTranslations[key]) || fallback;
+}
+
 // ── State ──
 let normativeFile = null;
 let schemaFile = null;
@@ -53,7 +58,7 @@ document.getElementById('btn-generate-rubric').addEventListener('click', generat
 async function generateRubric() {
   const btn = document.getElementById('btn-generate-rubric');
   btn.disabled = true;
-  btn.textContent = '⏳ Ejecutando pipeline multi-agente...';
+  btn.textContent = t('executing_pipeline', '⏳ Ejecutando pipeline multi-agente...');
 
   const progress = document.getElementById('rubric-progress');
   progress.classList.add('active');
@@ -67,7 +72,7 @@ async function generateRubric() {
   setStepState('step-ontology-agent', '');
   setStepState('step-adjuster-agent', '');
   setStepState('step-synthesizer-agent', '');
-  updateProgressStatus('Extrayendo texto de los documentos PDF...');
+  updateProgressStatus(t('extracting_text', 'Extrayendo texto de los documentos PDF...'));
 
   try {
     await sleep(500);
@@ -79,24 +84,24 @@ async function generateRubric() {
     formData.append('provider', provider);
 
     // Step 2: Extracting
-    updateProgressStatus('Extrayendo ontología normativa y esquema de evaluación...');
+    updateProgressStatus(t('extracting_ontology', 'Extrayendo ontología normativa y esquema de evaluación...'));
 
     // Simulate step progression while waiting for the long response
     const stepTimers = [
       setTimeout(() => {
         setStepState('step-extract', 'done');
         setStepState('step-ontology-agent', 'active');
-        updateProgressStatus('🤖 Agente 1: Analizando ontología normativa...');
+        updateProgressStatus(t('agent1_running', '🤖 Agente 1: Analizando ontología normativa...'));
       }, 10000),
       setTimeout(() => {
         setStepState('step-ontology-agent', 'done');
         setStepState('step-adjuster-agent', 'active');
-        updateProgressStatus('🤖 Agente 2: Ajustando ontología con esquema de evaluación...');
+        updateProgressStatus(t('agent2_running', '🤖 Agente 2: Ajustando ontología con esquema de evaluación...'));
       }, 50000),
       setTimeout(() => {
         setStepState('step-adjuster-agent', 'done');
         setStepState('step-synthesizer-agent', 'active');
-        updateProgressStatus('🤖 Agente 3: Sintetizando rúbrica final...');
+        updateProgressStatus(t('agent3_running', '🤖 Agente 3: Sintetizando rúbrica final...'));
       }, 100000),
     ];
 
@@ -110,7 +115,7 @@ async function generateRubric() {
     setStepState('step-ontology-agent', 'done');
     setStepState('step-adjuster-agent', 'done');
     setStepState('step-synthesizer-agent', 'done');
-    updateProgressStatus('Renderizando vista previa...');
+    updateProgressStatus(t('rendering_preview', 'Renderizando vista previa...'));
     await sleep(400);
 
     const json = await res.json();
@@ -132,7 +137,7 @@ async function generateRubric() {
     }
     document.getElementById('btn-clear-rubric').style.display = 'inline-flex';
 
-    toast('Rúbrica multi-agente generada exitosamente', 'success');
+    toast(t('generate_success', 'Rúbrica multi-agente generada exitosamente'), 'success');
   } catch (err) {
     progress.classList.remove('active');
     setStepState('step-extract', '');
@@ -142,7 +147,7 @@ async function generateRubric() {
     toast('Error: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '🤖 Generar Rúbrica Multi-Agente';
+    btn.textContent = t('btn_generate', '🤖 Generar Rúbrica Multi-Agente');
     checkReady();
   }
 }
@@ -180,13 +185,13 @@ async function loadSavedRubric() {
 
 // ── Clear All ──
 document.getElementById('btn-clear-rubric').addEventListener('click', async () => {
-  if (!confirm('¿Estás seguro de que quieres borrar toda la base de datos? Esta acción no se puede deshacer y eliminará todos los documentos, comparaciones y rúbricas.')) {
+  if (!confirm(t('clear_db_confirm', '¿Estás seguro de que quieres borrar toda la base de datos? Esta acción no se puede deshacer y eliminará todos los documentos, comparaciones y rúbricas.'))) {
     return;
   }
 
   const btn = document.getElementById('btn-clear-rubric');
   btn.disabled = true;
-  btn.textContent = '⏳ Borrando todo...';
+  btn.textContent = t('clearing', '⏳ Borrando todo...');
 
   try {
     const res = await fetch('/api/graph/clear', { method: 'POST' });
@@ -217,24 +222,28 @@ document.getElementById('btn-clear-rubric').addEventListener('click', async () =
     setStepState('step-adjuster-agent', '');
     setStepState('step-synthesizer-agent', '');
 
-    toast('Base de datos y rúbricas eliminadas por completo', 'success');
+    toast(t('clear_success', 'Base de datos y rúbricas eliminadas por completo'), 'success');
   } catch (err) {
     toast('Error al limpiar la base de datos: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '🗑️ Limpiar Todo';
+    btn.textContent = t('btn_clear', '🗑️ Limpiar Todo');
   }
 });
 
 // ── Render Rubric Preview ──
 function renderRubricPreview(rubric) {
   document.getElementById('rubric-doc-name').textContent = rubric.normativeDocument || '—';
-  document.getElementById('rubric-criteria-count').textContent = rubric.criteria.length + ' componentes';
+  
+  const compLabel = rubric.criteria.length > 1 ? t('components', 'componentes') : t('component', 'componente');
+  document.getElementById('rubric-criteria-count').textContent = rubric.criteria.length + ' ' + compLabel;
 
   // Count unique dimensions
   const dims = new Set(rubric.criteria.map(c => c.dimension));
-  document.getElementById('rubric-dimensions-count').textContent = dims.size + ' dimensiones';
-  document.getElementById('rubric-total-weight').textContent = rubric.totalWeight + ' pts máx.';
+  const dimLabel = dims.size > 1 ? t('dimensions', 'dimensiones') : t('dimension', 'dimensión');
+  document.getElementById('rubric-dimensions-count').textContent = dims.size + ' ' + dimLabel.toLowerCase();
+  
+  document.getElementById('rubric-total-weight').textContent = rubric.totalWeight + ' ' + t('pts_max', 'pts máx.');
 
   // Render non-evaluable observations
   if (rubric.nonEvaluableObservations && rubric.nonEvaluableObservations.length > 0) {
@@ -242,8 +251,8 @@ function renderRubricPreview(rubric) {
     obsContainer.innerHTML = rubric.nonEvaluableObservations.map(obs => `
       <div class="observation-item">
         <strong>${esc(obs.aspect)}</strong>
-        <p><em>Razón:</em> ${esc(obs.reason)}</p>
-        ${obs.recommendation ? `<p><em>Recomendación:</em> ${esc(obs.recommendation)}</p>` : ''}
+        <p><em>${t('reason', 'Razón')}:</em> ${esc(obs.reason)}</p>
+        ${obs.recommendation ? `<p><em>${t('recommendation', 'Recomendación')}:</em> ${esc(obs.recommendation)}</p>` : ''}
       </div>
     `).join('');
     document.getElementById('observations-panel').style.display = 'block';
@@ -269,17 +278,17 @@ function renderRubricPreview(rubric) {
     section.innerHTML = `
       <div class="dimension-header">
         <span class="dimension-icon">📋</span>
-        <span class="dimension-name">DIMENSIÓN ${dimIndex}: ${esc(dimName).toUpperCase()}</span>
-        <span class="dimension-count">${criteria.length} componente${criteria.length > 1 ? 's' : ''}</span>
+        <span class="dimension-name">${t('dimension', 'DIMENSIÓN')} ${dimIndex}: ${esc(dimName).toUpperCase()}</span>
+        <span class="dimension-count">${criteria.length} ${criteria.length > 1 ? t('components', 'componentes') : t('component', 'componente')}</span>
       </div>
       <table class="criteria-table">
         <thead>
           <tr>
-            <th class="th-criterion">Componente Evaluado</th>
-            <th class="th-criterion" style="background:#475569; width:20%;">Criterio de Calidad Institucional</th>
-            <th class="th-excellent">Cumple Totalmente (2 pts)</th>
-            <th class="th-acceptable">Cumple Parcialmente (1 pt)</th>
-            <th class="th-insufficient">No Cumple (0 pts)</th>
+            <th class="th-criterion">${t('table_evaluated_component', 'Componente Evaluado')}</th>
+            <th class="th-criterion" style="background:#475569; width:20%;">${t('table_institutional_criterion', 'Criterio de Calidad Institucional')}</th>
+            <th class="th-excellent">${t('table_level_excellent', 'Cumple Totalmente (2 pts)')}</th>
+            <th class="th-acceptable">${t('table_level_acceptable', 'Cumple Parcialmente (1 pt)')}</th>
+            <th class="th-insufficient">${t('table_level_insufficient', 'No Cumple (0 pts)')}</th>
           </tr>
         </thead>
         <tbody>
@@ -293,15 +302,15 @@ function renderRubricPreview(rubric) {
                 ${esc(c.description)}
               </td>
               <td class="td-excellent">
-                <strong>ÓPTIMO</strong><br>
+                <strong>${t('table_label_optimo', 'ÓPTIMO')}</strong><br>
                 ${esc(c.levels.full)}
               </td>
               <td class="td-acceptable">
-                <strong>ACEPTABLE CON OBSERVACIÓN</strong><br>
+                <strong>${t('table_label_acceptable', 'ACEPTABLE CON OBSERVACIÓN')}</strong><br>
                 ${esc(c.levels.partial)}
               </td>
               <td class="td-insufficient">
-                <strong>DEFICIENTE / CRÍTICO</strong><br>
+                <strong>${t('table_label_deficiente', 'DEFICIENTE / CRÍTICO')}</strong><br>
                 ${esc(c.levels.none)}
               </td>
             </tr>
@@ -333,6 +342,7 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+// HTML escape helper
 function esc(str) {
   const d = document.createElement('div');
   d.textContent = str || '';
