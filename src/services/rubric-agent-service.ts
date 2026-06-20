@@ -41,14 +41,24 @@ export async function* runRubricPipeline(
   normativeName: string,
   schemaName: string,
   graphBuilder: KnowledgeGraphBuilderImpl,
-  provider?: string
+  provider?: string,
+  lang: string = 'es'
 ): AsyncGenerator<RubricAgentStepUpdate, void, unknown> {
+  const languageNames: Record<string, string> = {
+    es: 'Español (Castellano)',
+    gl: 'Galego (Gallego)',
+    en: 'English (Inglés)',
+    pt: 'Português (Portugués)',
+  };
+  const targetLangName = languageNames[lang] || 'Español (Castellano)';
+
   logger.info(
     'RubricAgentService',
-    `Starting rubric pipeline: normative=${normativeName}, schema=${schemaName} with provider=${provider || 'default'}`
+    `Starting rubric pipeline: normative=${normativeName}, schema=${schemaName} with provider=${provider || 'default'} and language=${targetLangName}`
   );
 
   const model = getLlmProvider(provider);
+
 
   // ── Agent 1: Ontology Analyzer ──────────────────────────────────────────
   const ontologyAnalyzer = new LlmAgent({
@@ -65,6 +75,13 @@ export async function* runRubricPipeline(
       return `Eres un experto en evaluación y acreditación de programas universitarios.
 
 Tu tarea es examinar la siguiente ontología de requisitos normativos extraída de Neo4j y producir un análisis estructurado.
+
+=========================================
+IDIOMA OBLIGATORIO DE SALIDA: ${targetLangName}
+=========================================
+IMPORTANTE Y CRÍTICO: La ontología de entrada está redactada en Español. Sin embargo, toda la salida de texto (los valores de los campos "requirement", "justification", etc.) DEBE estar redactada y traducida completamente al: ${targetLangName}. 
+¡NO generes nada en Español en los valores de texto! Traduce activamente los conceptos, requisitos y justificaciones del Español al ${targetLangName}.
+Las claves del JSON deben mantenerse en inglés/español como se define en la estructura (ej. "analysis", "id", "requirement", "category", "type", "importance", "justification", "summary").
 
 ONTOLOGÍA NORMATIVA (${ontology.length} requisitos):
 ${JSON.stringify(ontology, null, 2)}
@@ -117,6 +134,13 @@ Tenés disponible:
 3. El ESQUEMA DE EVALUACIÓN (aspectos que la rúbrica debe cubrir, extraídos de un documento de estructura)
 
 Tu tarea es AJUSTAR la ontología normativa usando ambos documentos para preparar la rúbrica:
+
+=========================================
+IDIOMA OBLIGATORIO DE SALIDA: ${targetLangName}
+=========================================
+IMPORTANTE Y CRÍTICO: La ontología y el esquema de evaluación de entrada están en Español. Tu tarea requiere que toda la salida de texto (los valores de los campos "aspect", "description", "category", "verificationMethod", "reason", "requirement", etc.) DEBE estar redactada y traducida completamente al: ${targetLangName}.
+¡NO utilices Español en los valores de texto! Traduce activamente los nombres de aspectos, las descripciones, las categorías y los motivos del Español al ${targetLangName}.
+Las claves del JSON deben mantenerse exactamente como se especifica (ej. "rubricAspects", "schemaAspectId", "aspect", "description", "category", "normativeRequirements", "verificationMethod", "normativeWithoutSchema", "id", "requirement", "reason", "nonEvaluableAspects").
 
 A. Cruzar cada aspecto del esquema de evaluación con los requisitos normativos para encontrar la concordancia:
    - Para cada aspecto del esquema, identificar qué requisitos normativos lo sustentan
@@ -194,10 +218,18 @@ REGLAS ESTRICTAS:
 3. Los aspectos "normativeWithoutSchema" y "nonEvaluableAspects" NO van en la rúbrica, van como observaciones aparte.
 4. Los descriptores de cada nivel deben ser CONCRETOS y ESPECÍFICOS, describiendo exactamente qué evidencia buscar.
 
+=========================================
+IDIOMA OBLIGATORIO DE SALIDA: ${targetLangName}
+=========================================
+IMPORTANTE Y CRÍTICO: Todos los datos de entrada provistos por los agentes anteriores están en Español o mezclados. Tu salida final (los valores de los campos "title", "subtitle", "dimension", "criterion", "description", descriptores de niveles de cumplimiento en "levels: full, partial, none", observaciones en "nonEvaluableObservations", etc.) DEBE estar redactada y traducida COMPLETAMENTE al: ${targetLangName}.
+¡BAJO NINGUNA CIRCUNSTANCIA generes textos de valores en Español! Traduce activamente los títulos, dimensiones, criterios, descripciones, observaciones y especialmente los descriptores de nivel del Español al ${targetLangName}.
+Las claves del JSON deben mantenerse exactamente en inglés.
+
 NIVELES DE CUMPLIMIENTO (exactamente 3):
-- "Cumple Totalmente" (2 puntos) → ÓPTIMO
-- "Cumple Parcialmente" (1 punto) → ACEPTABLE CON OBSERVACIÓN
-- "No Cumple" (0 puntos) → DEFICIENTE / CRÍTICO
+Define los descriptores de nivel para cada criterio traduciendo al ${targetLangName}:
+- "full": Descriptor detallado en ${targetLangName} para Cumplimiento Total / Óptimo.
+- "partial": Descriptor detallado en ${targetLangName} para Cumplimiento Parcial / Aceptable con observación.
+- "none": Descriptor detallado en ${targetLangName} para Incumplimiento / Deficiente / Crítico.
 
 ANÁLISIS DE ONTOLOGÍA (Agente 1):
 ${ontologyAnalysis}
@@ -221,9 +253,9 @@ Devuelve un JSON con esta estructura exacta. No incluyas markdown, solo el JSON 
       "schemaAspectId": "ID del aspecto del esquema que cubre este criterio",
       "normativeRefs": ["IDs de requisitos normativos relacionados"],
       "levels": {
-        "full": "ÓPTIMO — Descriptor detallado de cumplimiento total con evidencias específicas",
-        "partial": "ACEPTABLE CON OBSERVACIÓN — Descriptor de cumplimiento parcial con deficiencias detectables",
-        "none": "DEFICIENTE / CRÍTICO — Descriptor de incumplimiento con falencias críticas"
+        "full": "Descriptor detallado de cumplimiento total con evidencias específicas",
+        "partial": "Descriptor de cumplimiento parcial con deficiencias detectables",
+        "none": "Descriptor de incumplimiento con falencias críticas"
       }
     }
   ],
@@ -237,6 +269,7 @@ Devuelve un JSON con esta estructura exacta. No incluyas markdown, solo el JSON 
 }`;
     },
   });
+
 
   // ── Pipeline ────────────────────────────────────────────────────────────
   const pipeline = new SequentialAgent({
@@ -257,11 +290,31 @@ Devuelve un JSON con esta estructura exacta. No incluyas markdown, solo el JSON 
     },
   });
 
+  // Track agent trajectory
+  const startedAgents = new Set<string>();
+  const pipelineStartTime = Date.now();
+  logger.info('RubricAgentService', `Rubric pipeline started at ${new Date().toISOString()}`);
+
   for await (const event of iterator) {
     if (event.author && event.author !== 'user' && event.author !== 'RubricPipeline') {
+      // Track agent start
+      if (!startedAgents.has(event.author)) {
+        startedAgents.add(event.author);
+        logger.info('RubricAgentService', `▶ Agent [${event.author}] started processing`);
+      }
+
       const content = stringifyContent(event);
       if (content && content.trim()) {
         const final = isFinalResponse(event);
+
+        // Log progress (truncated for readability)
+        const truncated = content.length > 200 ? content.substring(0, 200) + '…' : content;
+        logger.debug('RubricAgentService', `Agent [${event.author}] progress: ${truncated}`);
+
+        if (final) {
+          logger.info('RubricAgentService', `✔ Agent [${event.author}] finished processing (output: ${content.length} chars)`);
+        }
+
         yield {
           step: event.author as RubricAgentStepUpdate['step'],
           content,
@@ -270,4 +323,7 @@ Devuelve un JSON con esta estructura exacta. No incluyas markdown, solo el JSON 
       }
     }
   }
+
+  const totalDuration = Date.now() - pipelineStartTime;
+  logger.info('RubricAgentService', `Rubric pipeline completed in ${totalDuration}ms. Agents executed: ${Array.from(startedAgents).join(' → ')}`);
 }

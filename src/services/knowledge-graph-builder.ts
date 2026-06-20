@@ -23,6 +23,7 @@ import { ComparisonReport } from './comparison';
 import { Neo4jConnectionError, Neo4jQueryError, Neo4jError } from '../errors/neo4j.errors';
 import { retryWithBackoff } from '../utils/retry';
 import { createLogger } from './logger';
+import { tracer, SpanKind, SpanStatusCode } from '../utils/tracing';
 import { GenkitEngineImpl } from './genkit-engine';
 
 export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
@@ -53,11 +54,91 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
    */
   async connect(config: Neo4jConfig): Promise<void> {
     try {
-      this.driver = neo4j.driver(
+      const rawDriver = neo4j.driver(
         config.uri,
         neo4j.auth.basic(config.username, config.password),
         { disableLosslessIntegers: true }
       );
+
+      // Create a proxy wrapper for the Driver object
+      this.driver = new Proxy(rawDriver, {
+        get(target: any, prop: string | symbol, receiver: any) {
+          const originalValue = Reflect.get(target, prop, receiver);
+
+          if (prop === 'session') {
+            return function (...args: any[]) {
+              const session = originalValue.apply(target, args);
+              
+              // Wrap the Session object to intercept the run method
+              return new Proxy(session, {
+                get(sTarget: any, sProp: string | symbol, sReceiver: any) {
+                  const sOriginalValue = Reflect.get(sTarget, sProp, sReceiver);
+
+                  if (sProp === 'run') {
+                    return async function (query: string, parameters?: any) {
+                      const startTime = Date.now();
+                      const cleanedQuery = query.replace(/\s+/g, ' ').trim();
+                      const querySummary = cleanedQuery.substring(0, 80);
+                      
+                      const span = tracer.startSpan(`Neo4j: ${querySummary}`, {
+                        kind: SpanKind.CLIENT,
+                        attributes: {
+                          'langsmith.span.kind': 'tool',
+                          'db.system': 'neo4j',
+                          'db.statement': query,
+                          'inputs': JSON.stringify({ query, parameters })
+                        }
+                      });
+                      
+                      try {
+                        const result = await sOriginalValue.call(sTarget, query, parameters);
+                        const duration = Date.now() - startTime;
+                        const recordsCount = result.records ? result.records.length : 0;
+                        // Sanitize parameters for logging: truncate large text values
+                        const sanitizedParams = parameters ? Object.fromEntries(
+                          Object.entries(parameters).map(([k, v]) => [
+                            k,
+                            typeof v === 'string' && (v as string).length > 100
+                              ? (v as string).substring(0, 100) + `… [${(v as string).length} chars]`
+                              : Array.isArray(v) && v.length > 5
+                                ? `[Array(${v.length})]`
+                                : v
+                          ])
+                        ) : undefined;
+                        createLogger().info('Neo4jQuery', `✔ ${cleanedQuery.substring(0, 120)} | ${duration}ms | ${recordsCount} records`, sanitizedParams ? { params: sanitizedParams } : undefined);
+                        
+                        span.setAttribute('outputs', JSON.stringify({
+                          recordsCount,
+                          summary: `Success. Returned ${recordsCount} records.`
+                        }));
+                        span.setStatus({ code: SpanStatusCode.OK });
+                        return result;
+                      } catch (error: any) {
+                        const duration = Date.now() - startTime;
+                        createLogger().error('Neo4jQuery', `✘ ${cleanedQuery.substring(0, 120)} | ${duration}ms | Error: ${error.message}`, error);
+                        
+                        span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+                        span.recordException(error);
+                        throw error;
+                      } finally {
+                        span.end();
+                      }
+                    };
+                  }
+                  
+                  return typeof sOriginalValue === 'function' 
+                    ? sOriginalValue.bind(sTarget) 
+                    : sOriginalValue;
+                }
+              });
+            };
+          }
+
+          return typeof originalValue === 'function'
+            ? originalValue.bind(target)
+            : originalValue;
+        }
+      }) as unknown as Driver;
 
       await this.driver.verifyConnectivity();
       this.logger.info('KnowledgeGraph', 'Successfully connected to Neo4j');
@@ -640,16 +721,16 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     });
   }
 
-  async saveRubric(rubric: any, pdfBase64: string): Promise<void> {
+  async saveRubric(rubric: any, pdfBase64: string, lang: string = 'es'): Promise<void> {
     this.ensureConnected();
-    this.logger.info('KnowledgeGraph', 'Saving rubric to Neo4j...');
+    this.logger.info('KnowledgeGraph', `Saving rubric to Neo4j with language: ${lang}...`);
     
     // Convert rubric to JSON string to preserve the full structure inside Neo4j node properties
     const rubricJson = JSON.stringify(rubric);
     
     return this.executeWrite(async (session) => {
-      // First delete any previous rubric
-      await session.run('MATCH (r:Rubric) DETACH DELETE r');
+      // First delete any previous rubric for this language
+      await session.run('MATCH (r:Rubric {lang: $lang}) DETACH DELETE r', { lang });
       
       // Store the new rubric as a single node
       await session.run(`
@@ -659,7 +740,8 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
           normativeDocument: $normativeDocument,
           rubricJson: $rubricJson,
           pdfBase64: $pdfBase64,
-          generatedAt: $generatedAt
+          generatedAt: $generatedAt,
+          lang: $lang
         })
       `, {
         title: rubric.title,
@@ -667,20 +749,22 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         normativeDocument: rubric.normativeDocument,
         rubricJson,
         pdfBase64,
-        generatedAt: rubric.generatedAt
+        generatedAt: rubric.generatedAt,
+        lang
       });
     });
   }
 
-  async getLatestRubric(): Promise<{ rubric: any; pdfBase64: string } | null> {
+  async getLatestRubric(lang: string = 'es'): Promise<{ rubric: any; pdfBase64: string } | null> {
     this.ensureConnected();
+    this.logger.info('KnowledgeGraph', `Fetching latest rubric for language ${lang} from Neo4j...`);
     return this.executeRead(async (session) => {
       const result = await session.run(`
-        MATCH (r:Rubric)
+        MATCH (r:Rubric {lang: $lang})
         RETURN r.rubricJson AS rubricJson, r.pdfBase64 AS pdfBase64
         ORDER BY r.generatedAt DESC
         LIMIT 1
-      `);
+      `, { lang });
       
       if (result.records.length === 0) {
         return null;
@@ -693,7 +777,7 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
         const rubric = JSON.parse(rubricJson);
         return { rubric, pdfBase64 };
       } catch (err) {
-        this.logger.error('KnowledgeGraph', 'Failed to parse stored rubric JSON', err as Error);
+        this.logger.error('KnowledgeGraph', `Failed to parse stored rubric JSON for language ${lang}`, err as Error);
         return null;
       }
     });

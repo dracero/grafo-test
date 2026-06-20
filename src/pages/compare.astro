@@ -7,13 +7,40 @@ import UserSessionIsland from '../components/UserSessionIsland.astro';
 import { t } from '../lib/i18n';
 
 const currentLang = Astro.locals.lang || 'es';
+
+const compareTranslations = {
+  loaded_from_db: t('compare.js.loaded_from_db', currentLang),
+  analyzing: t('compare.js.analyzing', currentLang),
+  extracting_ontology: t('compare.js.extracting_ontology', currentLang),
+  comparison_completed: t('compare.js.comparison_completed', currentLang),
+  error_prefix: t('compare.js.error_prefix', currentLang),
+  no_docs_to_fix: t('compare.js.no_docs_to_fix', currentLang),
+  agent_corrector_modifying: t('compare.js.agent_corrector_modifying', currentLang),
+  fix_success: t('compare.js.fix_success', currentLang),
+  fix_error_prefix: t('compare.js.fix_error_prefix', currentLang),
+  total_requirements: t('compare.js.total_requirements', currentLang),
+  covered: t('compare.js.covered', currentLang),
+  partial: t('compare.js.partial', currentLang),
+  missing: t('compare.js.missing', currentLang),
+  general_coverage: t('compare.js.general_coverage', currentLang),
+  filter_all: t('compare.js.filter_all', currentLang),
+  filter_covered: t('compare.js.filter_covered', currentLang),
+  filter_partial: t('compare.js.filter_partial', currentLang),
+  filter_missing: t('compare.js.filter_missing', currentLang),
+  detail_by_requirement: t('compare.js.detail_by_requirement', currentLang),
+  evidence: t('compare.js.evidence', currentLang),
+  suggestion: t('compare.js.suggestion', currentLang),
+  status_covered: t('compare.js.status_covered', currentLang),
+  status_partial: t('compare.js.status_partial', currentLang),
+  status_missing: t('compare.js.status_missing', currentLang),
+};
 ---
 <!DOCTYPE html>
 <html lang={currentLang}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Comparación de documento normativo con programa de materia">
+  <meta name="description" content={t('meta.compare_description', currentLang)}>
   <title>{t('nav.compare', currentLang)} — Knowledge Graph</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -49,13 +76,7 @@ const currentLang = Astro.locals.lang || 'es';
     }
     .upload-card:hover { border-color: var(--accent-violet); background: var(--bg-elevated); }
     .upload-card.has-file { border-color: var(--accent-emerald); border-style: solid; }
-    .upload-card input[type="file"] { display: block; margin: 15px auto 0; cursor: pointer; font-size: 0.9rem; color: var(--text-secondary); }
-    .upload-card input[type="file"]::file-selector-button {
-      background: var(--bg-tertiary); border: 1px solid var(--border-light); padding: 6px 12px;
-      border-radius: var(--radius-sm); color: var(--text-primary); font-weight: 600; cursor: pointer;
-      margin-right: 12px; transition: all var(--transition-fast);
-    }
-    .upload-card input[type="file"]::file-selector-button:hover { background: var(--bg-elevated); border-color: var(--accent-violet); }
+    .upload-card input[type="file"] { display: none; }
     .upload-icon { font-size: 2.5rem; margin-bottom: 12px; display: block; }
     .upload-card h3 { font-size: 1rem; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
     .upload-card p { font-size: 0.82rem; color: var(--text-muted); line-height: 1.5; }
@@ -134,6 +155,9 @@ const currentLang = Astro.locals.lang || 'es';
       .result-details { grid-template-columns: 1fr; }
     }
   </style>
+  <script is:inline define:vars={{ compareTranslations }}>
+    window.AppTranslations = compareTranslations;
+  </script>
 </head>
 <body>
   <!-- Top Bar -->
@@ -152,7 +176,7 @@ const currentLang = Astro.locals.lang || 'es';
     </div>
     <div class="top-bar-right" style="display:flex; align-items:center; gap:12px;">
       <a href="/rubric" class="nav-link">📝 {t('nav.rubric', currentLang)}</a>
-      <a href="/" class="nav-link">← {t('nav.reload', currentLang) === 'Recargar' ? 'Volver al Grafo' : 'Back to Graph'}</a>
+      <a href="/" class="nav-link">← {t('compare.back_to_graph', currentLang)}</a>
       
       <UserSessionIsland server:defer>
         <div slot="fallback" style="color: #9ca3af; font-size: 0.75rem; padding: 6px 12px; background: rgba(255,255,255,0.05); border-radius:8px; border:1px solid rgba(255,255,255,0.08); min-width: 120px; text-align: center;">{t('loading', currentLang)}</div>
@@ -163,30 +187,30 @@ const currentLang = Astro.locals.lang || 'es';
   <div class="page-container">
     <div class="compare-content">
       <div class="page-hero">
-        <h1>Comparación Normativa</h1>
-        <p>Subí el documento normativo y el programa de materia para analizar la cobertura de requisitos y detectar puntos faltantes.</p>
+        <h1>{t('compare.title', currentLang)}</h1>
+        <p>{t('compare.subtitle', currentLang)}</p>
       </div>
 
       <div class="upload-grid">
         <div class="upload-card" id="card-normative">
-          <input type="file" accept=".pdf" id="file-normative">
+          <input type="file" accept=".pdf" id="file-normative" style="display: none;">
           <span class="upload-icon">📋</span>
-          <h3>Documento Normativo</h3>
-          <p class="upload-hint">Resolución, ordenanza o reglamento que establece los requisitos</p>
+          <h3>{t('compare.normative_title', currentLang)}</h3>
+          <p class="upload-hint">{t('compare.normative_desc', currentLang)}</p>
           <p class="upload-filename" id="name-normative"></p>
         </div>
         <div class="upload-card" id="card-program">
-          <input type="file" accept=".pdf" id="file-program">
+          <input type="file" accept=".pdf" id="file-program" style="display: none;">
           <span class="upload-icon">📚</span>
-          <h3>Programa de Materia</h3>
-          <p class="upload-hint">Programa o plan de estudios a evaluar contra la normativa</p>
+          <h3>{t('compare.program_title', currentLang)}</h3>
+          <p class="upload-hint">{t('compare.program_desc', currentLang)}</p>
           <p class="upload-filename" id="name-program"></p>
         </div>
       </div>
 
       <div class="options-container" style="display: flex; flex-direction: column; align-items: center; gap: 16px; margin-bottom: 24px;">
         <div style="display: flex; align-items: center; gap: 12px; justify-content: center; background: var(--bg-secondary); padding: 10px 20px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); box-shadow: var(--shadow-sm);">
-          <label for="model-provider" style="font-size: 0.88rem; color: var(--text-secondary); font-weight: 600;">Proveedor de IA:</label>
+          <label for="model-provider" style="font-size: 0.88rem; color: var(--text-secondary); font-weight: 600;">{t('rubric.ai_provider', currentLang)}</label>
           <select id="model-provider" style="background: var(--bg-primary); border: 1px solid var(--border-light); padding: 8px 14px; border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-sans); font-size: 0.88rem; cursor: pointer; outline: none; transition: border-color var(--transition-fast);">
             <option value="gemini">Google Gemini (Gemini 3.5 Flash)</option>
             <option value="groq">Groq (Llama 3.3 70B)</option>
@@ -195,17 +219,17 @@ const currentLang = Astro.locals.lang || 'es';
         
         <label class="checkbox-label">
           <input type="checkbox" id="clear-previous" checked>
-          Borrar comparaciones anteriores del grafo
+          {t('compare.clear_previous', currentLang)}
         </label>
       </div>
 
       <div class="compare-actions">
-        <button id="btn-compare" class="btn-compare" disabled>Comparar Documentos</button>
+        <button id="btn-compare" class="btn-compare" disabled>{t('compare.btn_compare', currentLang)}</button>
       </div>
 
       <div class="progress-bar" id="progress-bar">
         <div class="progress-track"><div class="progress-fill indeterminate"></div></div>
-        <p class="progress-status" id="progress-status">Extrayendo ontología del documento normativo...</p>
+        <p class="progress-status" id="progress-status">{t('compare.js.extracting_ontology', currentLang)}</p>
       </div>
 
       <div class="results-section" id="results-section">
@@ -214,24 +238,24 @@ const currentLang = Astro.locals.lang || 'es';
             <div class="doc-badge" style="background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.2); padding: 8px 14px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 8px;">
               <span style="font-size: 1.1rem;">📋</span>
               <div>
-                <div style="font-size: 0.65rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.04em;">Documento Normativo</div>
+                <div style="font-size: 0.65rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.04em;">{t('compare.normative_title', currentLang)}</div>
                 <div id="display-normative-name" style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">—</div>
               </div>
             </div>
             <div class="doc-badge" style="background: rgba(6, 182, 212, 0.08); border: 1px solid rgba(6, 182, 212, 0.2); padding: 8px 14px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 8px;">
               <span style="font-size: 1.1rem;">📚</span>
               <div>
-                <div style="font-size: 0.65rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.04em;">Programa de Materia</div>
+                <div style="font-size: 0.65rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.04em;">{t('compare.program_title', currentLang)}</div>
                 <div id="display-program-name" style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">—</div>
               </div>
             </div>
           </div>
           <div style="display: flex; gap: 12px; align-items: center;">
             <button id="btn-fix" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-emerald), #059669); box-shadow: 0 0 18px rgba(16, 185, 129, 0.25); display: none; padding: 10px 24px; font-size: 0.88rem; font-weight: 700; height: auto;">
-              🔧 Arreglar Programa
+              {t('compare.btn_fix', currentLang)}
             </button>
             <button id="btn-download-non-compliance" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-rose), #e11d48); box-shadow: 0 0 18px rgba(244, 63, 94, 0.25); display: none; padding: 10px 24px; font-size: 0.88rem; font-weight: 700; height: auto;">
-              📥 Descargar No Conformidades
+              {t('compare.btn_download_non_compliance', currentLang)}
             </button>
           </div>
         </div>
@@ -248,44 +272,44 @@ const currentLang = Astro.locals.lang || 'es';
   <!-- Fix Modal -->
   <div id="fix-modal" class="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
     <div class="modal-content" style="background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); max-width: 600px; width: 90%; padding: 32px; box-shadow: var(--shadow-lg);">
-      <h2 style="font-size: 1.4rem; font-weight: 800; background: linear-gradient(135deg, var(--accent-emerald), var(--accent-cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 16px; margin-top: 0;">Corrección de Programa con Multi-Agente</h2>
-      <p id="fix-modal-description" style="color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 24px; line-height: 1.5;">El sistema multi-agente está procesando el programa de la materia utilizando el proveedor de IA seleccionado para corregir los puntos faltantes o parciales de acuerdo a la normativa.</p>
+      <h2 style="font-size: 1.4rem; font-weight: 800; background: linear-gradient(135deg, var(--accent-emerald), var(--accent-cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 16px; margin-top: 0;">{t('compare.fix_title', currentLang)}</h2>
+      <p id="fix-modal-description" style="color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 24px; line-height: 1.5;">{t('compare.fix_desc', currentLang)}</p>
       
       <div id="fix-steps" style="display: flex; flex-direction: column; gap: 14px; margin-bottom: 28px;">
         <div class="fix-step" id="step-start" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
           <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
-          <span>Iniciando sistema de agentes ADK...</span>
+          <span>{t('compare.fix.step_start', currentLang)}</span>
         </div>
         <div class="fix-step" id="step-normative" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
           <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
-          <span>Agente Normativo: Leyendo requisitos en Neo4j...</span>
+          <span>{t('compare.fix.step_normative', currentLang)}</span>
         </div>
         <div class="fix-step" id="step-program" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
           <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
-          <span>Agente del Programa: Leyendo estructura en Neo4j...</span>
+          <span>{t('compare.fix.step_program', currentLang)}</span>
         </div>
         <div class="fix-step" id="step-compliance" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
           <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
-          <span>Agente de Cumplimiento: Analizando brechas (gaps)...</span>
+          <span>{t('compare.fix.step_compliance', currentLang)}</span>
         </div>
         <div class="fix-step" id="step-validator" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
           <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
-          <span>Validador Semántico: Descartando falsas brechas...</span>
+          <span>{t('compare.fix.step_validator', currentLang)}</span>
         </div>
         <div class="fix-step" id="step-fixer" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
           <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
-          <span class="step-text">Agente Corrector: Modificando programa...</span>
+          <span class="step-text">{t('compare.fix.step_fixer', currentLang)}</span>
         </div>
         <div class="fix-step" id="step-pdf" style="display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.9rem;">
           <span class="step-status" style="width: 20px; text-align: center;">⏳</span>
-          <span>Generador: Creando PDF con formato normativo...</span>
+          <span>{t('compare.fix.step_pdf', currentLang)}</span>
         </div>
       </div>
 
       <div style="display: flex; justify-content: flex-end; gap: 12px;">
-        <button id="btn-close-modal" class="filter-tab" style="padding: 8px 18px; font-size: 0.85rem; height: auto; cursor: pointer;">Cerrar</button>
+        <button id="btn-close-modal" class="filter-tab" style="padding: 8px 18px; font-size: 0.85rem; height: auto; cursor: pointer;">{t('compare.btn_close', currentLang)}</button>
         <a id="btn-download-pdf" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-cyan), #0891b2); box-shadow: 0 0 18px rgba(6, 182, 212, 0.25); text-decoration: none; display: none; padding: 10px 20px; font-size: 0.85rem; font-weight: 700; align-items: center; gap: 8px; height: auto;">
-          📥 Descargar PDF Corregido
+          {t('compare.btn_download_corrected_pdf', currentLang)}
         </a>
       </div>
     </div>

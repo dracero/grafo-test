@@ -19,6 +19,8 @@ import { googleAI } from '@genkit-ai/google-genai';
 import { Agent, setGlobalDispatcher } from 'undici';
 import { createLogger } from './logger';
 import { retryWithBackoff } from '../utils/retry';
+import { apiKeyManager } from '../utils/api-key-manager';
+import { tracer, SpanKind, SpanStatusCode } from '../utils/tracing';
 
 // Configure global dispatcher to prevent HeadersTimeoutError during long comparisons
 setGlobalDispatcher(new Agent({
@@ -31,7 +33,7 @@ setGlobalDispatcher(new Agent({
 const logger = createLogger();
 
 // ─── Model constants ───────────────────────────────────────────────────────
-const MODEL_FLASH = 'googleai/gemini-3.5-flash';
+const MODEL_FLASH = 'googleai/gemini-2.5-flash';
 
 // 65 536 is the maximum output token limit for Gemini 2.5 Flash.
 const MAX_OUTPUT_TOKENS = 65_536;
@@ -169,61 +171,132 @@ function parseComparisonResponse(raw: string): any[] {
 // ── Service ────────────────────────────────────────────────────────────────
 
 export class ComparisonService {
-  private ai: Genkit;
+  private explicitApiKey?: string;
+  private aiInstances = new Map<string, Genkit>();
 
-  constructor(apiKey: string) {
-    this.ai = genkit({
-      plugins: [
-        googleAI({ apiKey }),
-      ],
-    });
+  constructor(apiKey?: string) {
+    this.explicitApiKey = apiKey;
+  }
+
+  private getAi(apiKey: string): Genkit {
+    let ai = this.aiInstances.get(apiKey);
+    if (!ai) {
+      ai = genkit({
+        plugins: [
+          googleAI({ apiKey }),
+        ],
+      });
+      this.aiInstances.set(apiKey, ai);
+    }
+    return ai;
   }
 
   private async generateWithRetry(options: any, operationName: string, provider?: string): Promise<any> {
     const isGroq = (provider || '').toLowerCase().trim() === 'groq';
     return retryWithBackoff(
       async () => {
-        if (isGroq) {
-          const apiKey = process.env.GROQ_API_KEY || '';
-          if (!apiKey) {
-            throw new Error('GROQ_API_KEY is not defined in the environment.');
+        const modelName = isGroq ? 'llama-3.3-70b-versatile' : (options.model || 'googleai/gemini-2.5-flash');
+        const systemName = isGroq ? 'groq' : 'gemini';
+        
+        const span = tracer.startSpan(`ComparisonService:${operationName}`, {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            'langsmith.span.kind': 'LLM',
+            'gen_ai.system': systemName,
+            'gen_ai.request.model': modelName,
+            'inputs': JSON.stringify({ prompt: options.prompt, config: options.config })
           }
-          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: 'llama-3.3-70b-versatile',
-              messages: [
-                { role: 'user', content: options.prompt }
-              ],
-              temperature: options.config?.temperature ?? 0.2,
-              max_tokens: options.config?.maxOutputTokens ?? 4096,
-            })
-          });
-          
-          if (response.status === 413 || response.status === 429) {
-            logger.warn('Comparison', `Groq rate/context limit hit (status ${response.status}). Waiting 30 seconds before retrying...`);
-            await new Promise(resolve => setTimeout(resolve, 30000));
-            throw new Error(`Groq rate limit (${response.status}) hit, retrying after delay.`);
+        });
+        
+        try {
+          if (isGroq) {
+            const apiKey = process.env.GROQ_API_KEY || '';
+            if (!apiKey) {
+              throw new Error('GROQ_API_KEY is not defined in the environment.');
+            }
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                  { role: 'user', content: options.prompt }
+                ],
+                temperature: options.config?.temperature ?? 0.2,
+                max_tokens: options.config?.maxOutputTokens ?? 4096,
+              })
+            });
+            
+            if (response.status === 413 || response.status === 429) {
+              logger.warn('Comparison', `Groq rate/context limit hit (status ${response.status}). Waiting 30 seconds before retrying...`);
+              await new Promise(resolve => setTimeout(resolve, 30000));
+              throw new Error(`Groq rate limit (${response.status}) hit, retrying after delay.`);
+            }
+            
+            if (!response.ok) {
+              const errText = await response.text();
+              throw new Error(`Groq API returned error status ${response.status}: ${errText}`);
+            }
+            const json = await response.json() as any;
+            const content = json.choices?.[0]?.message?.content || '';
+            const groqUsage = json.usage;
+            if (groqUsage) {
+              logger.info('Comparison', `[${operationName}] Groq token usage - Prompt: ${groqUsage.prompt_tokens}, Completion: ${groqUsage.completion_tokens}, Total: ${groqUsage.total_tokens}`);
+              span.setAttributes({
+                'gen_ai.usage.prompt_tokens': groqUsage.prompt_tokens,
+                'gen_ai.usage.completion_tokens': groqUsage.completion_tokens,
+                'gen_ai.usage.total_tokens': groqUsage.total_tokens
+              });
+            }
+            span.setAttribute('outputs', JSON.stringify({ text: content }));
+            span.setStatus({ code: SpanStatusCode.OK });
+            return { text: content };
+          } else {
+            const currentKey = this.explicitApiKey || apiKeyManager.getCurrentKey();
+            try {
+              const ai = this.getAi(currentKey);
+              const response = await ai.generate(options);
+              const genkitUsage = response.usage;
+              if (genkitUsage) {
+                logger.info('Comparison', `[${operationName}] Gemini token usage - Input: ${genkitUsage.inputTokens}, Output: ${genkitUsage.outputTokens}, Total: ${genkitUsage.totalTokens}`);
+                span.setAttributes({
+                  'gen_ai.usage.prompt_tokens': genkitUsage.inputTokens,
+                  'gen_ai.usage.completion_tokens': genkitUsage.outputTokens,
+                  'gen_ai.usage.total_tokens': genkitUsage.totalTokens
+                });
+              }
+              span.setAttribute('outputs', JSON.stringify({ text: response.text }));
+              span.setStatus({ code: SpanStatusCode.OK });
+              return response;
+            } catch (error: any) {
+              const status = error.status || error.code || 500;
+              const errMsg = String(error.message || error.originalMessage || error || '').toLowerCase();
+              const isRateOrUnavailable = status === 429 || status === 503 ||
+                                          errMsg.includes('503') || errMsg.includes('429') ||
+                                          errMsg.includes('unavailable') || errMsg.includes('resource exhausted') ||
+                                          errMsg.includes('rate limit') || errMsg.includes('api_key_invalid') ||
+                                          errMsg.includes('invalid api key');
+
+              if (!this.explicitApiKey && isRateOrUnavailable) {
+                apiKeyManager.rotateKey(currentKey);
+              }
+              throw error;
+            }
           }
-          
-          if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Groq API returned error status ${response.status}: ${errText}`);
-          }
-          const json = await response.json() as any;
-          const content = json.choices?.[0]?.message?.content || '';
-          return { text: content };
-        } else {
-          return this.ai.generate(options);
+        } catch (err: any) {
+          span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+          span.recordException(err);
+          throw err;
+        } finally {
+          span.end();
         }
       },
       {
         maxRetries: 5,
-        initialDelayMs: isGroq ? 3000 : 15_000,
+        initialDelayMs: isGroq ? 3000 : 2000,
         maxDelayMs: 90_000,
         component: 'ComparisonService',
         operationName,

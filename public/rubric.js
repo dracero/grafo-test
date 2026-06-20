@@ -19,16 +19,29 @@ let pdfBase64 = null;
 // ── File Inputs ──
 
 function setupFileInput(inputId, cardId, nameId, fileKey) {
-  document.getElementById(inputId).addEventListener('change', (e) => {
+  const card = document.getElementById(cardId);
+  const input = document.getElementById(inputId);
+
+  card.addEventListener('click', (e) => {
+    if (e.target !== input) {
+      input.click();
+    }
+  });
+
+  input.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  input.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (fileKey === 'normative') normativeFile = file;
     else if (fileKey === 'schema') schemaFile = file;
 
     if (file) {
-      document.getElementById(cardId).classList.add('has-file');
+      card.classList.add('has-file');
       document.getElementById(nameId).textContent = '✓ ' + file.name;
     } else {
-      document.getElementById(cardId).classList.remove('has-file');
+      card.classList.remove('has-file');
       document.getElementById(nameId).textContent = '';
     }
     checkReady();
@@ -78,10 +91,13 @@ async function generateRubric() {
     await sleep(500);
 
     const provider = document.getElementById('model-provider')?.value || 'gemini';
+    const lang = document.documentElement.lang || 'es';
     const formData = new FormData();
     formData.append('normative', normativeFile);
     formData.append('evaluationSchema', schemaFile);
     formData.append('provider', provider);
+    formData.append('lang', lang);
+
 
     // Step 2: Extracting
     updateProgressStatus(t('extracting_ontology', 'Extrayendo ontología normativa y esquema de evaluación...'));
@@ -284,32 +300,32 @@ function renderRubricPreview(rubric) {
       <table class="criteria-table">
         <thead>
           <tr>
-            <th class="th-criterion">${t('table_evaluated_component', 'Componente Evaluado')}</th>
-            <th class="th-criterion" style="background:#475569; width:20%;">${t('table_institutional_criterion', 'Criterio de Calidad Institucional')}</th>
-            <th class="th-excellent">${t('table_level_excellent', 'Cumple Totalmente (2 pts)')}</th>
-            <th class="th-acceptable">${t('table_level_acceptable', 'Cumple Parcialmente (1 pt)')}</th>
-            <th class="th-insufficient">${t('table_level_insufficient', 'No Cumple (0 pts)')}</th>
+            <th class="th-criterion" style="width:25%;">${t('table_evaluated_component', 'Componente Evaluado')}</th>
+            <th class="th-criterion" style="width:20%;">${t('table_institutional_criterion', 'Criterio de Calidad Institucional')}</th>
+            <th class="th-excellent" style="width:18%;">${t('table_level_excellent', 'Cumple Totalmente (2 pts)')}</th>
+            <th class="th-acceptable" style="width:18%;">${t('table_level_acceptable', 'Cumple Parcialmente (1 pt)')}</th>
+            <th class="th-insufficient" style="width:18%;">${t('table_level_insufficient', 'No Cumple (0 pts)')}</th>
           </tr>
         </thead>
         <tbody>
           ${criteria.map(c => `
             <tr>
-              <td class="td-criterion">
+              <td class="td-criterion" data-label="${t('table_evaluated_component', 'Componente Evaluado')}">
                 ${esc(c.id)}<br>
                 <strong>${esc(c.criterion)}</strong>
               </td>
-              <td style="color: var(--text-secondary); font-size: 0.78rem;">
+              <td class="td-institutional" data-label="${t('table_institutional_criterion', 'Criterio de Calidad Institucional')}">
                 ${esc(c.description)}
               </td>
-              <td class="td-excellent">
+              <td class="td-excellent" data-label="${t('table_level_excellent', 'Cumple Totalmente (2 pts)')}">
                 <strong>${t('table_label_optimo', 'ÓPTIMO')}</strong><br>
                 ${esc(c.levels.full)}
               </td>
-              <td class="td-acceptable">
+              <td class="td-acceptable" data-label="${t('table_level_acceptable', 'Cumple Parcialmente (1 pt)')}">
                 <strong>${t('table_label_acceptable', 'ACEPTABLE CON OBSERVACIÓN')}</strong><br>
                 ${esc(c.levels.partial)}
               </td>
-              <td class="td-insufficient">
+              <td class="td-insufficient" data-label="${t('table_level_insufficient', 'No Cumple (0 pts)')}">
                 <strong>${t('table_label_deficiente', 'DEFICIENTE / CRÍTICO')}</strong><br>
                 ${esc(c.levels.none)}
               </td>

@@ -3,7 +3,7 @@
  * POST /api/compare       — Runs a full comparison between normative and program PDFs
  */
 import type { APIRoute } from 'astro';
-import { getServices, originalPdfBuffers } from '../../../lib/services';
+import { getServices, originalPdfBuffers, savePdfBufferToDisk } from '../../../lib/services';
 import { createLogger } from '../../../services/logger';
 
 const logger = createLogger();
@@ -47,9 +47,11 @@ export const POST: APIRoute = async ({ request }) => {
     const normBuffer = Buffer.from(await normFile.arrayBuffer());
     const progBuffer = Buffer.from(await progFile.arrayBuffer());
 
-    // Store original PDF buffers for later use by the fix pipeline
+    // Store original PDF buffers in-memory AND on disk for fix pipeline
     originalPdfBuffers.set(progFile.name, progBuffer);
     originalPdfBuffers.set(normFile.name, normBuffer);
+    savePdfBufferToDisk(progFile.name, progBuffer);
+    savePdfBufferToDisk(normFile.name, normBuffer);
     logger.info('API', `Stored original PDF buffers: ${progFile.name} (${progBuffer.length} bytes), ${normFile.name} (${normBuffer.length} bytes)`);
 
     const normPdf = await pdfParse(normBuffer);

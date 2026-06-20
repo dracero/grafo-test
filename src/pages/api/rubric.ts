@@ -27,6 +27,7 @@ import { genkit } from 'genkit';
 import { googleAI } from '@genkit-ai/google-genai';
 import { Agent, setGlobalDispatcher } from 'undici';
 import { retryWithBackoff } from '../../utils/retry';
+import { apiKeyManager } from '../../utils/api-key-manager';
 
 // Configure global dispatcher for long requests
 setGlobalDispatcher(new Agent({
@@ -198,13 +199,29 @@ ${text.substring(0, limit)}`;
         const content = json.choices?.[0]?.message?.content || '';
         return { text: content };
       } else {
-        const ai = genkit({ plugins: [googleAI({ apiKey: config.google.apiKey })] });
-        return ai.generate({
-          model: 'googleai/gemini-3.5-flash',
-          prompt,
-          output: { format: 'text' },
-          config: { maxOutputTokens: 32_768 },
-        });
+        const currentKey = apiKeyManager.getCurrentKey() || config.google.apiKey;
+        try {
+          const ai = genkit({ plugins: [googleAI({ apiKey: currentKey })] });
+          return await ai.generate({
+            model: 'googleai/gemini-2.5-flash',
+            prompt,
+            output: { format: 'text' },
+            config: { maxOutputTokens: 32_768 },
+          });
+        } catch (error: any) {
+          const status = error.status || error.code || 500;
+          const errMsg = String(error.message || '').toLowerCase();
+          const isRateOrUnavailable = status === 429 || status === 503 ||
+                                      errMsg.includes('503') || errMsg.includes('429') ||
+                                      errMsg.includes('unavailable') || errMsg.includes('resource exhausted') ||
+                                      errMsg.includes('rate limit') || errMsg.includes('api_key_invalid') ||
+                                      errMsg.includes('invalid api key');
+
+          if (isRateOrUnavailable) {
+            apiKeyManager.rotateKey(currentKey);
+          }
+          throw error;
+        }
       }
     },
     {
@@ -229,7 +246,7 @@ ${text.substring(0, limit)}`;
 
 // ── POST ────────────────────────────────────────────────────────────────────
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   try {
     const { comparisonService, graphBuilder, config } = await getServices();
     const formData = await request.formData();
@@ -237,6 +254,8 @@ export const POST: APIRoute = async ({ request }) => {
     const normFile = formData.get('normative') as File | null;
     const schemaFile = formData.get('evaluationSchema') as File | null;
     const provider = formData.get('provider') as string | null || undefined;
+    const lang = (formData.get('lang') as string | null) || cookies.get('app_lang')?.value || 'es';
+
 
     if (!normFile || !schemaFile) {
       const missing = [];
@@ -340,7 +359,7 @@ export const POST: APIRoute = async ({ request }) => {
     logger.info('Rubric', `Step 4: Running multi-agent rubric pipeline with provider: ${provider || 'default'}...`);
     let rubricRaw: any = null;
 
-    for await (const update of runRubricPipeline(normFile.name, schemaFile.name, graphBuilder, provider)) {
+    for await (const update of runRubricPipeline(normFile.name, schemaFile.name, graphBuilder, provider, lang)) {
       logger.info('Rubric', `[${update.step}] final=${update.isFinal}, content length=${update.content.length}`);
 
       if (update.step === 'RubricSynthesizerAgent' && update.isFinal) {
@@ -382,12 +401,12 @@ export const POST: APIRoute = async ({ request }) => {
     logger.info('Rubric', `✅ Multi-agent rubric generated: ${criteria.length} criteria, max score: ${totalWeight} pts`);
 
     // ── Step 5: Generate PDF ──
-    const pdfBuffer = await generateRubricPDF(rubric);
+    const pdfBuffer = await generateRubricPDF(rubric, lang);
     const pdfBase64 = pdfBuffer.toString('base64');
 
     // ── Step 6: Persist to Neo4j ──
-    logger.info('Rubric', 'Persisting generated rubric to Neo4j...');
-    await graphBuilder.saveRubric(rubric, pdfBase64);
+    logger.info('Rubric', `Persisting generated rubric to Neo4j with language ${lang}...`);
+    await graphBuilder.saveRubric(rubric, pdfBase64, lang);
 
     return new Response(JSON.stringify({
       success: true,
@@ -411,11 +430,12 @@ export const POST: APIRoute = async ({ request }) => {
 /**
  * GET /api/rubric — Retrieves the latest persisted rubric from Neo4j.
  */
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ cookies }) => {
   try {
     const { graphBuilder } = await getServices();
-    logger.info('Rubric', 'Fetching latest rubric from Neo4j...');
-    const result = await graphBuilder.getLatestRubric();
+    const lang = cookies.get('app_lang')?.value || 'es';
+    logger.info('Rubric', `Fetching latest rubric for language ${lang} from Neo4j...`);
+    const result = await graphBuilder.getLatestRubric(lang);
 
     if (!result) {
       return new Response(JSON.stringify({ success: true, data: null }), {

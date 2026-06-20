@@ -3,6 +3,11 @@
  * D3.js force-directed graph visualization with interactive controls.
  */
 
+// ── i18n helper ──
+function t(key, fallback) {
+  return (window.AppTranslations && window.AppTranslations[key]) || fallback;
+}
+
 const API = '';
 const ENTITY_COLORS = {
   PERSON: '#F472B6', ORGANIZATION: '#60A5FA', LOCATION: '#34D399',
@@ -101,7 +106,7 @@ function ticked() {
 
 // ── Load Graph Data ──
 async function loadGraph() {
-  showLoading('Cargando grafo...');
+  showLoading(t('loading_graph', 'Cargando grafo...'));
   try {
     const res = await fetch(`${API}/api/graph/raw`);
     const json = await res.json();
@@ -119,12 +124,12 @@ async function loadGraph() {
       document.getElementById('empty-state').classList.add('hidden');
     }
 
-    toast('Grafo cargado correctamente', 'success');
+    toast(t('graph_loaded', 'Grafo cargado correctamente'), 'success');
   } catch (err) {
     hideLoading();
     console.error('Error loading graph:', err);
     document.getElementById('empty-state').classList.remove('hidden');
-    toast('Error cargando el grafo: ' + err.message, 'error');
+    toast(t('error_loading_graph', 'Error cargando el grafo: ') + err.message, 'error');
   }
 }
 
@@ -239,14 +244,14 @@ function onNodeClick(d) {
 
   let html = `
     <div class="node-detail-section">
-      <div class="node-detail-label">Tipo</div>
+      <div class="node-detail-label">${t('type', 'Tipo')}</div>
       <div><span class="node-type-badge" style="background:${color}20;color:${color};border:1px solid ${color}40">${d.type}</span></div>
     </div>`;
 
   if (props.sourceText) {
     html += `
     <div class="node-detail-section">
-      <div class="node-detail-label">Texto Fuente</div>
+      <div class="node-detail-label">${t('source_text', 'Texto Fuente')}</div>
       <div class="node-detail-value">${escapeHtml(props.sourceText)}</div>
     </div>`;
   }
@@ -254,7 +259,7 @@ function onNodeClick(d) {
   if (props.documents && props.documents.length > 0) {
     html += `
     <div class="node-detail-section">
-      <div class="node-detail-label">Documentos</div>
+      <div class="node-detail-label">${t('documents', 'Documentos')}</div>
       <div class="node-detail-value">${props.documents.map(doc => `<div>📄 ${escapeHtml(doc)}</div>`).join('')}</div>
     </div>`;
   }
@@ -268,7 +273,7 @@ function onNodeClick(d) {
   if (connections.length > 0) {
     html += `
     <div class="node-detail-section">
-      <div class="node-detail-label">Conexiones (${connections.length})</div>
+      <div class="node-detail-label">${t('connections', 'Conexiones')} (${connections.length})</div>
       <div class="node-connections">
         ${connections.map(c => {
           const isSource = (c.source === d.id || (c.source && c.source.id === d.id));
@@ -290,7 +295,7 @@ function onNodeClick(d) {
   if (extraProps.length > 0) {
     html += `
     <div class="node-detail-section">
-      <div class="node-detail-label">Propiedades</div>
+      <div class="node-detail-label">${t('properties', 'Propiedades')}</div>
       ${extraProps.map(([k, v]) => `<div class="node-detail-value"><strong>${k}:</strong> ${escapeHtml(String(v))}</div>`).join('')}
     </div>`;
   }
@@ -339,7 +344,7 @@ function clearHighlight() {
 // ── Sidebar Builders ──
 function buildFilters(types) {
   const container = document.getElementById('type-filters');
-  if (!types.length) { container.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Sin datos</span>'; return; }
+  if (!types.length) { container.innerHTML = `<span style="font-size:0.78rem;color:var(--text-muted)">${t('no_data', 'Sin datos')}</span>`; return; }
 
   activeFilters = new Set(types.map(t => t.type));
   container.innerHTML = types.map(t => {
@@ -423,7 +428,7 @@ function buildLegend(types) {
 
 function buildDocList(docs) {
   const container = document.getElementById('doc-list');
-  if (!docs.length) { container.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Sin documentos</span>'; return; }
+  if (!docs.length) { container.innerHTML = `<span style="font-size:0.78rem;color:var(--text-muted)">${t('no_documents', 'Sin documentos')}</span>`; return; }
   container.innerHTML = docs.map(d =>
     `<div class="doc-item"><span class="doc-icon">📄</span>${truncate(d.document, 22)}<span class="doc-count">${d.entityCount}</span></div>`
   ).join('');
@@ -432,27 +437,27 @@ function buildDocList(docs) {
 
 // ── Clear Database ──
 async function clearDatabase() {
-  if (!confirm('¿Estás seguro de que quieres borrar toda la base de datos de Neo4j? Esta acción no se puede deshacer.')) {
+  if (!confirm(t('confirm_clear_db', '¿Estás seguro de que quieres borrar toda la base de datos de Neo4j? Esta acción no se puede deshacer.'))) {
     return;
   }
 
   const btn = document.getElementById('btn-clear-db');
   btn.disabled = true;
-  btn.innerHTML = '<span class="loading-dots">Borrando...</span>';
-  toast('Borrando la base de datos...', 'info');
+  btn.innerHTML = `<span class="loading-dots">${t('deleting', 'Borrando...')}</span>`;
+  toast(t('deleting_database', 'Borrando la base de datos...'), 'info');
 
   try {
     const res = await fetch(`${API}/api/graph/clear`, { method: 'POST' });
     const json = await res.json();
     if (!json.success) throw new Error(json.error);
 
-    toast('Base de datos borrada con éxito', 'success');
+    toast(t('database_deleted', 'Base de datos borrada con éxito'), 'success');
     await loadGraph();
   } catch (err) {
-    toast('Error borrando la base de datos: ' + err.message, 'error');
+    toast(t('error_deleting', 'Error borrando la base de datos: ') + err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg> Borrar BD';
+    btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg> ${t('clear_db_btn', 'Borrar BD')}`;
   }
 }
 
@@ -462,7 +467,7 @@ async function doSearch() {
   if (!query) return;
 
   const container = document.getElementById('search-results');
-  container.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Buscando...</span>';
+  container.innerHTML = `<span style="font-size:0.78rem;color:var(--text-muted)">${t('searching', 'Buscando...')}</span>`;
 
   try {
     const res = await fetch(`${API}/api/search`, {
@@ -474,7 +479,7 @@ async function doSearch() {
     if (!json.success) throw new Error(json.error);
 
     if (json.data.length === 0) {
-      container.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">Sin resultados</span>';
+      container.innerHTML = `<span style="font-size:0.78rem;color:var(--text-muted)">${t('no_results', 'Sin resultados')}</span>`;
       return;
     }
 

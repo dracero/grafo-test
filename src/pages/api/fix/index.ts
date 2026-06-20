@@ -3,18 +3,19 @@
  * Runs the multi-agent correction pipeline with streaming response.
  */
 import type { APIRoute } from 'astro';
-import { getServices, originalPdfBuffers, correctedPdfs } from '../../../lib/services';
+import { getServices, getOriginalPdfBuffer, correctedPdfs } from '../../../lib/services';
 import { runCorrectionPipeline } from '../../../services/multi-agent-service';
 import { generateCorrectedProgramPDF, parseCorrections } from '../../../services/pdf-generator';
 import { createLogger } from '../../../services/logger';
 
 const logger = createLogger();
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   try {
     const { graphBuilder } = await getServices();
     const body = await request.json();
     const { normativeDocument, programDocument, provider } = body;
+    const lang = body.lang || cookies.get('app_lang')?.value || 'es';
 
     if (!normativeDocument || !programDocument) {
       return new Response(JSON.stringify({ success: false, error: 'Se requieren "normativeDocument" y "programDocument"' }), {
@@ -23,14 +24,14 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    logger.info('API', `Starting fix pipeline: ${programDocument} against ${normativeDocument} using provider: ${provider || 'default'}`);
+    logger.info('API', `Starting fix pipeline: ${programDocument} against ${normativeDocument} using provider: ${provider || 'default'} and language: ${lang}`);
 
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder, provider);
+          const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder, provider, lang);
           let correctedText = '';
 
           for await (const update of pipeline) {
@@ -53,12 +54,12 @@ export const POST: APIRoute = async ({ request }) => {
             JSON.stringify({ type: 'progress', step: 'PDFGenerator', content: `Generando PDF con formato original + ${corrections.length} correcciones...`, isFinal: false }) + '\n'
           ));
 
-          const originalBuffer = originalPdfBuffers.get(programDocument) || null;
+          const originalBuffer = getOriginalPdfBuffer(programDocument);
           if (!originalBuffer) {
-            logger.warn('API', `Original PDF buffer not found for "${programDocument}".`);
+            logger.warn('API', `Original PDF buffer not found for "${programDocument}" (neither in-memory nor on disk).`);
           }
 
-          const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, correctedText);
+          const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, correctedText, lang);
           const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
           correctedPdfs.set(downloadName, pdfBuffer);
 

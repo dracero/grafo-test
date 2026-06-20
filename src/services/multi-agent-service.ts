@@ -15,9 +15,12 @@ export async function* runCorrectionPipeline(
   normativeName: string,
   programName: string,
   graphBuilder: KnowledgeGraphBuilderImpl,
-  provider?: string
+  provider?: string,
+  lang: string = 'es'
 ): AsyncGenerator<AgentStepUpdate, void, unknown> {
-  logger.info('MultiAgentService', `Starting correction pipeline: ${programName} using ${normativeName} with provider: ${provider || 'default'}`);
+  logger.info('MultiAgentService', `Starting correction pipeline: ${programName} using ${normativeName} with provider: ${provider || 'default'} and language: ${lang}`);
+
+  const targetLangName = lang === 'gl' ? 'Gallego' : lang === 'pt' ? 'Portugués' : lang === 'en' ? 'Inglés' : 'Español';
 
   // 1. Initialize LLM
   const model = getLlmProvider(provider);
@@ -38,7 +41,7 @@ export async function* runCorrectionPipeline(
       Aquí está la ontología normativa extraída:
       ${JSON.stringify(ontology, null, 2)}
       
-      Por favor, genera un análisis estructurado que resuma los requisitos indispensables que debe cumplir cualquier programa de materia según esta norma.`;
+      Por favor, genera un análisis estructurado en idioma ${targetLangName} que resuma los requisitos indispensables que debe cumplir cualquier programa de materia según esta norma.`;
     }
   });
 
@@ -57,7 +60,7 @@ export async function* runCorrectionPipeline(
       Aquí están los conceptos y contenidos extraídos de la materia:
       ${JSON.stringify(ontology, null, 2)}
       
-      Por favor, resume la estructura actual del programa (objetivos, contenidos principales, metodología, etc.) resaltando cómo está organizado originalmente.`;
+      Por favor, resume la estructura actual del programa (objetivos, contenidos principales, metodología, etc.) en idioma ${targetLangName} resaltando cómo está organizado originalmente.`;
     }
   });
 
@@ -96,7 +99,7 @@ export async function* runCorrectionPipeline(
       Aquí están los resultados de cumplimiento parciales o faltantes extraídos de Neo4j:
       ${JSON.stringify(gaps, null, 2)}
       
-      Por favor, consolida estas brechas en un informe estructurado.
+      Por favor, consolida estas brechas en un informe estructurado escrito en idioma ${targetLangName}.
       
       DIRECTIVAS DE ANÁLISIS PEDAGÓGICO (Abstractas):
       1. Evita proponer la creación de nuevas asignaturas para cubrir competencias transversales o metodológicas (como competencias digitales, ética, comunicación o colaboración). En su lugar, promueve la integración gradual y transversal en asignaturas existentes a lo largo del trayecto formativo.
@@ -139,8 +142,9 @@ DIRECTIVAS DE EVALUACIÓN SEMÁNTICA Y HOLÍSTICA:
 2. Identifica "Declaraciones Negativas Válidas": Si una brecha reclama que falta regular o detallar un aspecto (por ejemplo, procedimientos de dispensa académica, exenciones de asistencia, requerimiento de software pago, laboratorios específicos, etc.) y en el programa el docente indica explícitamente que NO aplica, que NO se concede, o que NINGUNA actividad está sujeta a ello (ej: "no se concede dispensa académica en ningún caso", "todas las actividades son obligatorias", "no hay software requerido"), esto constituye una regulación completa y válida para la materia. Debes declarar esta brecha como un FALSO POSITIVO y removerla/descartarla para que no se intente generar una corrección innecesaria.
 3. Identifica "No Aplicabilidad por Naturaleza": Si un requisito normativo de infraestructura o equipamiento no aplica al tipo de asignatura (por ejemplo, laboratorios físicos para una materia puramente teórica), clasifica la brecha como FALSO POSITIVO y remuévela.
 4. Conserva únicamente las BRECHAS REALES donde efectivamente falte información que la norma exige obligatoriamente y que no haya sido abordada en absoluto en el programa.
+5. SÉ PRUDENTE AL DESCARTAR: No elimines brechas si no hay una justificación explícita en el programa original. Si tienes dudas sobre si el programa cubre el requisito, mantén la brecha como real para asegurar cobertura completa.
 
-Devuelve un JSON que contenga la lista final depurada de brechas reales de cumplimiento. No incluyas markdown, solo el JSON puro con esta estructura:
+Devuelve un JSON que contenga la lista final depurada de brechas reales de cumplimiento. Todos los campos de texto descriptivos (ej: description, evidence, suggestion, reason) deben estar escritos obligatoriamente en idioma ${targetLangName}. No incluyas markdown, solo el JSON puro con esta estructura:
 {
   "validatedGaps": [
     {
@@ -197,8 +201,13 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
       TEXTO ORIGINAL DEL PROGRAMA (referencia):
       ${originalText}
       
-      INSTRUCCIONES DE FORMATO DE SALIDA:
-      Devolvé ÚNICAMENTE un JSON válido con la siguiente estructura. No incluyas markdown, solo el JSON puro:
+      OBLIGACIÓN DE COBERTURA EXHAUSTIVA DE BRECHAS:
+      - Debes revisar cada una de las brechas reales en "validatedGaps" de "Brechas de Cumplimiento Validadas".
+      - Para CADA UNA de las brechas listadas en "validatedGaps", debes generar una corrección independiente en el array "corrections". No las agrupes de forma genérica ni las resumas en un único objeto de corrección. Si hay N brechas validadas, debe haber exactamente N correcciones en el array resultante. Esto es obligatorio para asegurar que todas las faltantes aparezcan de forma explícita y separada en el anexo de correcciones del documento PDF final.
+      
+      INSTRUCCIONES DE IDIOMA Y FORMATO DE SALIDA:
+      - Todos los campos de texto descriptivos y propuestas de adecuación ("justification", "correctedText") deben estar redactados obligatoriamente en idioma ${targetLangName}.
+      - Devolvé ÚNICAMENTE un JSON válido con la siguiente estructura. No incluyas markdown, solo el JSON puro:
 
       {"corrections": [
         {
@@ -238,12 +247,31 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
     }
   });
 
-  // 5. Yield updates to caller
+  // 5. Yield updates to caller — with agent trajectory tracking
+  const startedAgents = new Set<string>();
+  const pipelineStartTime = Date.now();
+  logger.info('MultiAgentService', `Pipeline started at ${new Date().toISOString()}`);
+
   for await (const event of iterator) {
     if (event.author && event.author !== 'user' && event.author !== 'CorrectionPipeline') {
+      // Track agent start
+      if (!startedAgents.has(event.author)) {
+        startedAgents.add(event.author);
+        logger.info('MultiAgentService', `▶ Agent [${event.author}] started processing`);
+      }
+
       const content = stringifyContent(event);
       if (content && content.trim()) {
         const isFinal = isFinalResponse(event);
+
+        // Log progress (truncated for readability)
+        const truncated = content.length > 200 ? content.substring(0, 200) + '…' : content;
+        logger.debug('MultiAgentService', `Agent [${event.author}] progress: ${truncated}`);
+
+        if (isFinal) {
+          logger.info('MultiAgentService', `✔ Agent [${event.author}] finished processing (output: ${content.length} chars)`);
+        }
+
         yield {
           step: event.author as any,
           content,
@@ -252,4 +280,7 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
       }
     }
   }
+
+  const totalDuration = Date.now() - pipelineStartTime;
+  logger.info('MultiAgentService', `Pipeline completed in ${totalDuration}ms. Agents executed: ${Array.from(startedAgents).join(' → ')}`);
 }

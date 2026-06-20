@@ -10,6 +10,7 @@
 
 import PDFDocumentKit from 'pdfkit';
 import { createLogger } from './logger';
+import { t } from '../lib/i18n';
 
 const logger = createLogger();
 
@@ -37,8 +38,8 @@ export interface RubricData {
 /**
  * Generates a complete rubric PDF from the rubric data in CONEAU format.
  */
-export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
-  logger.info('RubricPDF', `Generating rubric PDF: ${rubric.criteria.length} criteria`);
+export async function generateRubricPDF(rubric: RubricData, lang: string = 'es'): Promise<Buffer> {
+  logger.info('RubricPDF', `Generating rubric PDF in language '${lang}': ${rubric.criteria.length} criteria`);
 
   return new Promise((resolve, reject) => {
     try {
@@ -91,23 +92,30 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
       doc.fillColor('#334155')
          .font('Helvetica-Bold')
          .fontSize(9)
-         .text('Documento Normativo:', infoX, boxY + 14, { continued: true })
+         .text(t('rubric.pdf.normative_document', lang), infoX, boxY + 14, { continued: true })
          .font('Helvetica')
          .text(`  ${rubric.normativeDocument}`);
 
-      doc.fillColor('#334155')
-         .font('Helvetica-Bold')
-         .fontSize(9)
-         .text('Componentes Evaluados:', infoX, boxY + 32, { continued: true })
-         .font('Helvetica')
-         .text(`  ${rubric.criteria.length} componentes en ${new Set(rubric.criteria.map(c => c.dimension)).size} dimensiones`);
+      const numComp = rubric.criteria.length;
+      const numDims = new Set(rubric.criteria.map(c => c.dimension)).size;
+      const compWord = numComp > 1 ? t('rubric.js.components', lang) : t('rubric.js.component', lang);
+      const dimWord = numDims > 1 ? (lang === 'en' ? 'dimensions' : lang === 'gl' ? 'dimensións' : lang === 'pt' ? 'dimensões' : 'dimensiones') : (lang === 'en' ? 'dimension' : lang === 'gl' ? 'dimensión' : lang === 'pt' ? 'dimensão' : 'dimensión');
+      const inWord = t('rubric.pdf.in', lang);
 
       doc.fillColor('#334155')
          .font('Helvetica-Bold')
          .fontSize(9)
-         .text('Puntuación Máxima:', infoX, boxY + 50, { continued: true })
+         .text(t('rubric.pdf.evaluated_components', lang), infoX, boxY + 32, { continued: true })
          .font('Helvetica')
-         .text(`  ${rubric.totalWeight} puntos (${rubric.criteria.length} × 2 pts)`);
+         .text(`  ${numComp} ${compWord} ${inWord} ${numDims} ${dimWord}`);
+
+      const pointsWord = t('rubric.pdf.points', lang);
+      doc.fillColor('#334155')
+         .font('Helvetica-Bold')
+         .fontSize(9)
+         .text(t('rubric.pdf.max_score', lang), infoX, boxY + 50, { continued: true })
+         .font('Helvetica')
+         .text(`  ${rubric.totalWeight} ${pointsWord} (${rubric.criteria.length} × 2 pts)`);
 
       doc.y = boxY + 100;
 
@@ -118,18 +126,20 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
          .font('Helvetica')
          .fontSize(8)
          .text(
-           'ESCALA DE EVALUACIÓN: Cumple Totalmente (2 pts) = ÓPTIMO | Cumple Parcialmente (1 pt) = ACEPTABLE CON OBSERVACIÓN | No Cumple (0 pts) = DEFICIENTE / CRÍTICO',
+           t('rubric.pdf.evaluation_scale', lang),
            { align: 'center', width: writeWidth }
          );
 
       doc.moveDown(0.5);
+      const dateLocale = lang === 'en' ? 'en-US' : lang === 'pt' ? 'pt-BR' : lang === 'gl' ? 'gl-ES' : 'es-AR';
       doc.fillColor('#64748b')
          .font('Helvetica')
          .fontSize(8)
          .text(
-           `Fecha de generación: ${new Date(rubric.generatedAt).toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+           `${t('rubric.pdf.generation_date', lang)} ${new Date(rubric.generatedAt).toLocaleDateString(dateLocale, { year: 'numeric', month: 'long', day: 'numeric' })}`,
            { align: 'center', width: writeWidth }
          );
+
 
       // ── Group criteria by dimension ────────────────────────────────────
       const dimensions = new Map<string, RubricCriterion[]>();
@@ -159,7 +169,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
         doc.fillColor('#ffffff')
            .font('Helvetica-Bold')
            .fontSize(10)
-           .text(`DIMENSIÓN ${dimIndex}: ${dimName.toUpperCase()}`, margin + 12, dimY + 9, { width: writeWidth - 24 });
+           .text(`${t('rubric.js.dimension', lang, 'DIMENSIÓN')} ${dimIndex}: ${dimName.toUpperCase()}`, margin + 12, dimY + 9, { width: writeWidth - 24 });
 
         doc.y = dimY + 32;
 
@@ -174,7 +184,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
         doc.fillColor('#ffffff')
            .font('Helvetica-Bold')
            .fontSize(7)
-           .text('Componente\nEvaluado', margin + 5, headerY + 7, { width: colComponent - 10, align: 'center' });
+           .text(t('rubric.js.table.evaluated_component', lang).replace(' ', '\n'), margin + 5, headerY + 7, { width: colComponent - 10, align: 'center' });
 
         // Criteria column
         let xPos = margin + colComponent;
@@ -184,7 +194,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
         doc.fillColor('#ffffff')
            .font('Helvetica-Bold')
            .fontSize(7)
-           .text('Criterio de Calidad\nInstitucional', xPos + 5, headerY + 7, { width: colCriteria - 10, align: 'center' });
+           .text(t('rubric.js.table.institutional_criterion', lang).replace(' ', '\n'), xPos + 5, headerY + 7, { width: colCriteria - 10, align: 'center' });
 
         // Level headers
         xPos += colCriteria;
@@ -196,7 +206,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
         doc.fillColor('#ffffff')
            .font('Helvetica-Bold')
            .fontSize(6.5)
-           .text('Cumple\nTotalmente (2 pts)', xPos + 4, headerY + 7, { width: colLevel - 8, align: 'center' });
+           .text(t('rubric.js.table.level_excellent', lang).replace(' ', '\n'), xPos + 4, headerY + 7, { width: colLevel - 8, align: 'center' });
 
         xPos += colLevel;
 
@@ -207,7 +217,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
         doc.fillColor('#ffffff')
            .font('Helvetica-Bold')
            .fontSize(6.5)
-           .text('Cumple\nParcialmente (1 pt)', xPos + 4, headerY + 7, { width: colLevel - 8, align: 'center' });
+           .text(t('rubric.js.table.level_acceptable', lang).replace(' ', '\n'), xPos + 4, headerY + 7, { width: colLevel - 8, align: 'center' });
 
         xPos += colLevel;
 
@@ -218,9 +228,10 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
         doc.fillColor('#ffffff')
            .font('Helvetica-Bold')
            .fontSize(6.5)
-           .text('No Cumple\n(0 pts)', xPos + 4, headerY + 7, { width: colLevel - 8, align: 'center' });
+           .text(t('rubric.js.table.level_insufficient', lang).replace(' ', '\n'), xPos + 4, headerY + 7, { width: colLevel - 8, align: 'center' });
 
         doc.y = headerY + headerH;
+
 
         // Criteria rows
         for (let cIdx = 0; cIdx < dimCriteria.length; cIdx++) {
@@ -251,30 +262,34 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
             doc.fillColor('#ffffff')
                .font('Helvetica-Bold')
                .fontSize(9)
-               .text(`DIMENSIÓN ${dimIndex}: ${dimName.toUpperCase()} (cont.)`, margin + 12, rDimY + 6, { width: writeWidth - 24 });
+               .text(`${t('rubric.js.dimension', lang, 'DIMENSIÓN')} ${dimIndex}: ${dimName.toUpperCase()} (${lang === 'en' ? 'cont.' : 'cont.'})`, margin + 12, rDimY + 6, { width: writeWidth - 24 });
             doc.y = rDimY + 24;
 
             // Mini header
             const rHeaderY = doc.y;
             const rHeaderH = 20;
             doc.rect(margin, rHeaderY, colComponent, rHeaderH).lineWidth(0.5).fillAndStroke('#334155', '#94a3b8');
-            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text('Componente', margin + 5, rHeaderY + 6, { width: colComponent - 10, align: 'center' });
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text(t('rubric.js.component', lang, 'Componente'), margin + 5, rHeaderY + 6, { width: colComponent - 10, align: 'center' });
 
             let rx = margin + colComponent;
             doc.rect(rx, rHeaderY, colCriteria, rHeaderH).lineWidth(0.5).fillAndStroke('#475569', '#94a3b8');
-            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text('Criterio', rx + 5, rHeaderY + 6, { width: colCriteria - 10, align: 'center' });
+            const critWord = lang === 'en' ? 'Criterion' : lang === 'gl' ? 'Criterio' : 'Criterio';
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text(critWord, rx + 5, rHeaderY + 6, { width: colCriteria - 10, align: 'center' });
             rx += colCriteria;
 
+            const labelFullMini = lang === 'en' ? 'Full (2)' : lang === 'gl' ? 'Cumpre Tot. (2)' : lang === 'pt' ? 'Cumpre Tot. (2)' : 'Cumple Tot. (2)';
             doc.rect(rx, rHeaderY, colLevel, rHeaderH).lineWidth(0.5).fillAndStroke('#16a34a', '#94a3b8');
-            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text('Cumple Tot. (2)', rx + 3, rHeaderY + 6, { width: colLevel - 6, align: 'center' });
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text(labelFullMini, rx + 3, rHeaderY + 6, { width: colLevel - 6, align: 'center' });
             rx += colLevel;
 
+            const labelPartMini = lang === 'en' ? 'Partial (1)' : lang === 'gl' ? 'Cumpre Parc. (1)' : lang === 'pt' ? 'Cumpre Parc. (1)' : 'Cumple Parc. (1)';
             doc.rect(rx, rHeaderY, colLevel, rHeaderH).lineWidth(0.5).fillAndStroke('#d97706', '#94a3b8');
-            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text('Cumple Parc. (1)', rx + 3, rHeaderY + 6, { width: colLevel - 6, align: 'center' });
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text(labelPartMini, rx + 3, rHeaderY + 6, { width: colLevel - 6, align: 'center' });
             rx += colLevel;
 
+            const labelNoneMini = lang === 'en' ? 'None (0)' : lang === 'gl' ? 'Non Cumpre (0)' : lang === 'pt' ? 'Não Cumpre (0)' : 'No Cumple (0)';
             doc.rect(rx, rHeaderY, colLevel, rHeaderH).lineWidth(0.5).fillAndStroke('#dc2626', '#94a3b8');
-            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text('No Cumple (0)', rx + 3, rHeaderY + 6, { width: colLevel - 6, align: 'center' });
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(6).text(labelNoneMini, rx + 3, rHeaderY + 6, { width: colLevel - 6, align: 'center' });
 
             doc.y = rHeaderY + rHeaderH;
           }
@@ -309,7 +324,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
           doc.fillColor('#166534')
              .font('Helvetica-Bold')
              .fontSize(6)
-             .text('ÓPTIMO', xPos + 5, rowY + 4, { width: colLevel - 10 });
+             .text(t('rubric.js.table.label_optimo', lang), xPos + 5, rowY + 4, { width: colLevel - 10 });
           doc.fillColor('#166534')
              .font('Helvetica')
              .fontSize(6.5)
@@ -321,7 +336,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
           doc.fillColor('#92400e')
              .font('Helvetica-Bold')
              .fontSize(6)
-             .text('ACEPTABLE CON OBSERVACIÓN', xPos + 5, rowY + 4, { width: colLevel - 10 });
+             .text(t('rubric.js.table.label_acceptable', lang), xPos + 5, rowY + 4, { width: colLevel - 10 });
           doc.fillColor('#92400e')
              .font('Helvetica')
              .fontSize(6.5)
@@ -333,7 +348,7 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
           doc.fillColor('#991b1b')
              .font('Helvetica-Bold')
              .fontSize(6)
-             .text('DEFICIENTE / CRÍTICO', xPos + 5, rowY + 4, { width: colLevel - 10 });
+             .text(t('rubric.js.table.label_deficiente', lang), xPos + 5, rowY + 4, { width: colLevel - 10 });
           doc.fillColor('#991b1b')
              .font('Helvetica')
              .fontSize(6.5)
@@ -376,8 +391,8 @@ export async function generateRubricPDF(rubric: RubricData): Promise<Buffer> {
         doc.fontSize(7)
            .fillColor('#94a3b8')
            .font('Helvetica')
-           .text(`${docName} — Rúbrica de Evaluación (Normativa)`, margin, pageHeight - 24, { align: 'left', continued: true })
-           .text(`Página ${j + 1} de ${pages.count}`, pageWidth - margin - 80, pageHeight - 24, { width: 80, align: 'right' });
+           .text(`${docName} — ${t('rubric.pdf.footer_title', lang)}`, margin, pageHeight - 24, { align: 'left', continued: true })
+           .text(`${t('rubric.pdf.page', lang)} ${j + 1} ${t('rubric.pdf.page_of', lang)} ${pages.count}`, pageWidth - margin - 80, pageHeight - 24, { width: 80, align: 'right' });
 
         doc.page.margins.bottom = oldBottom;
       }

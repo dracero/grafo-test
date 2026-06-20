@@ -3,6 +3,11 @@
  * Extracted from inline <script> in compare.html
  */
 
+// ── i18n helper ──
+function t(key, fallback) {
+  return (window.AppTranslations && window.AppTranslations[key]) || fallback;
+}
+
 // ── State ──
 let normativeFile = null;
 let programFile = null;
@@ -17,7 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (json.success && json.data) {
       renderResults(json.data);
       document.getElementById('results-section').classList.add('visible');
-      toast('Resumen de comparación cargado desde la base de datos', 'info');
+      toast(t('loaded_from_db', 'Resumen de comparación cargado desde la base de datos'), 'info');
     }
   } catch (err) {
     console.error('Failed to load latest comparison:', err);
@@ -25,23 +30,38 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ── File Inputs ──
-document.getElementById('file-normative').addEventListener('change', e => {
-  normativeFile = e.target.files[0];
-  if (normativeFile) {
-    document.getElementById('card-normative').classList.add('has-file');
-    document.getElementById('name-normative').textContent = '✓ ' + normativeFile.name;
-  }
-  checkReady();
-});
+function setupFileInput(inputId, cardId, nameId, fileKey) {
+  const card = document.getElementById(cardId);
+  const input = document.getElementById(inputId);
 
-document.getElementById('file-program').addEventListener('change', e => {
-  programFile = e.target.files[0];
-  if (programFile) {
-    document.getElementById('card-program').classList.add('has-file');
-    document.getElementById('name-program').textContent = '✓ ' + programFile.name;
-  }
-  checkReady();
-});
+  card.addEventListener('click', (e) => {
+    if (e.target !== input) {
+      input.click();
+    }
+  });
+
+  input.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
+  input.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (fileKey === 'normative') normativeFile = file;
+    else if (fileKey === 'program') programFile = file;
+
+    if (file) {
+      card.classList.add('has-file');
+      document.getElementById(nameId).textContent = '✓ ' + file.name;
+    } else {
+      card.classList.remove('has-file');
+      document.getElementById(nameId).textContent = '';
+    }
+    checkReady();
+  });
+}
+
+setupFileInput('file-normative', 'card-normative', 'name-normative', 'normative');
+setupFileInput('file-program', 'card-program', 'name-program', 'program');
 
 function checkReady() {
   document.getElementById('btn-compare').disabled = !(normativeFile && programFile);
@@ -53,11 +73,11 @@ document.getElementById('btn-compare').addEventListener('click', runComparison);
 async function runComparison() {
   const btn = document.getElementById('btn-compare');
   btn.disabled = true;
-  btn.textContent = 'Analizando...';
+  btn.textContent = t('analyzing', 'Analizando...');
 
   const progress = document.getElementById('progress-bar');
   progress.classList.add('active');
-  document.getElementById('progress-status').textContent = 'Extrayendo ontología del documento normativo...';
+  document.getElementById('progress-status').textContent = t('extracting_ontology', 'Extrayendo ontología del documento normativo...');
   document.getElementById('results-section').classList.remove('visible');
 
   try {
@@ -76,13 +96,13 @@ async function runComparison() {
     progress.classList.remove('active');
     renderResults(json.data);
     document.getElementById('results-section').classList.add('visible');
-    toast('Comparación completada', 'success');
+    toast(t('comparison_completed', 'Comparación completada'), 'success');
   } catch (err) {
     progress.classList.remove('active');
-    toast('Error: ' + err.message, 'error');
+    toast(t('error_prefix', 'Error: ') + err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Comparar Documentos';
+    btn.textContent = t('btn_compare', 'Comparar Documentos');
   }
 }
 
@@ -100,10 +120,10 @@ function renderResults(report) {
   document.getElementById('btn-download-non-compliance').style.display = hasGaps ? 'block' : 'none';
 
   document.getElementById('summary-grid').innerHTML = `
-    <div class="summary-card"><div class="value value-total">${s.total}</div><div class="label">Total Requisitos</div></div>
-    <div class="summary-card"><div class="value value-covered">${s.covered}</div><div class="label">Cubiertos</div></div>
-    <div class="summary-card"><div class="value value-partial">${s.partial}</div><div class="label">Parciales</div></div>
-    <div class="summary-card"><div class="value value-missing">${s.missing}</div><div class="label">Faltantes</div></div>
+    <div class="summary-card"><div class="value value-total">${s.total}</div><div class="label">${t('total_requirements', 'Total Requisitos')}</div></div>
+    <div class="summary-card"><div class="value value-covered">${s.covered}</div><div class="label">${t('covered', 'Cubiertos')}</div></div>
+    <div class="summary-card"><div class="value value-partial">${s.partial}</div><div class="label">${t('partial', 'Parciales')}</div></div>
+    <div class="summary-card"><div class="value value-missing">${s.missing}</div><div class="label">${t('missing', 'Faltantes')}</div></div>
   `;
 
   const covPct = s.total > 0 ? (s.covered / s.total * 100).toFixed(1) : 0;
@@ -113,7 +133,7 @@ function renderResults(report) {
 
   document.getElementById('coverage-container').innerHTML = `
     <div class="coverage-header">
-      <h3>Cobertura General</h3>
+      <h3>${t('general_coverage', 'Cobertura General')}</h3>
       <span class="coverage-percent" style="color:${barColor}">${s.coveragePercent}%</span>
     </div>
     <div class="coverage-track">
@@ -122,9 +142,9 @@ function renderResults(report) {
       <div class="coverage-segment missing" style="width:${misPct}%"></div>
     </div>
     <div class="coverage-legend">
-      <div class="coverage-legend-item"><div class="coverage-legend-dot" style="background:var(--accent-emerald)"></div>Cubierto (${covPct}%)</div>
-      <div class="coverage-legend-item"><div class="coverage-legend-dot" style="background:var(--accent-amber)"></div>Parcial (${parPct}%)</div>
-      <div class="coverage-legend-item"><div class="coverage-legend-dot" style="background:var(--accent-rose)"></div>Faltante (${misPct}%)</div>
+      <div class="coverage-legend-item"><div class="coverage-legend-dot" style="background:var(--accent-emerald)"></div>${t('status_covered', 'Cubierto')} (${covPct}%)</div>
+      <div class="coverage-legend-item"><div class="coverage-legend-dot" style="background:var(--accent-amber)"></div>${t('status_partial', 'Parcial')} (${parPct}%)</div>
+      <div class="coverage-legend-item"><div class="coverage-legend-dot" style="background:var(--accent-rose)"></div>${t('status_missing', 'Faltante')} (${misPct}%)</div>
     </div>
   `;
 
@@ -136,17 +156,21 @@ function renderTable(results, filter) {
   currentResults = results;
   const filtered = filter === 'all' ? results : results.filter(r => r.status === filter);
 
-  const statusLabel = { covered: 'Cubierto', partial: 'Parcial', missing: 'Faltante' };
+  const statusLabel = {
+    covered: t('status_covered', 'Cubierto'),
+    partial: t('status_partial', 'Parcial'),
+    missing: t('status_missing', 'Faltante')
+  };
   const statusIcon = { covered: '✓', partial: '◐', missing: '✗' };
 
   document.getElementById('results-table').innerHTML = `
     <div class="results-table-header">
-      <h3>Detalle por Requisito (${filtered.length})</h3>
+      <h3>${t('detail_by_requirement', 'Detalle por Requisito')} (${filtered.length})</h3>
       <div class="filter-tabs">
-        <button class="filter-tab ${filter==='all'?'active':''}" onclick="renderTable(currentResults,'all')">Todos</button>
-        <button class="filter-tab ${filter==='covered'?'active':''}" onclick="renderTable(currentResults,'covered')">Cubiertos</button>
-        <button class="filter-tab ${filter==='partial'?'active':''}" onclick="renderTable(currentResults,'partial')">Parciales</button>
-        <button class="filter-tab ${filter==='missing'?'active':''}" onclick="renderTable(currentResults,'missing')">Faltantes</button>
+        <button class="filter-tab ${filter==='all'?'active':''}" onclick="renderTable(currentResults,'all')">${t('filter_all', 'Todos')}</button>
+        <button class="filter-tab ${filter==='covered'?'active':''}" onclick="renderTable(currentResults,'covered')">${t('filter_covered', 'Cubiertos')}</button>
+        <button class="filter-tab ${filter==='partial'?'active':''}" onclick="renderTable(currentResults,'partial')">${t('filter_partial', 'Parciales')}</button>
+        <button class="filter-tab ${filter==='missing'?'active':''}" onclick="renderTable(currentResults,'missing')">${t('filter_missing', 'Faltantes')}</button>
       </div>
     </div>
     ${filtered.map(r => `
@@ -159,11 +183,11 @@ function renderTable(results, filter) {
         </div>
         <div class="result-details">
           <div class="result-detail-box evidence">
-            <div class="detail-label">Evidencia</div>
+            <div class="detail-label">${t('evidence', 'Evidencia')}</div>
             <div class="detail-text">${esc(r.evidence) || '—'}</div>
           </div>
           <div class="result-detail-box suggestion">
-            <div class="detail-label">Sugerencia</div>
+            <div class="detail-label">${t('suggestion', 'Sugerencia')}</div>
             <div class="detail-text">${esc(r.suggestion) || '—'}</div>
           </div>
         </div>
@@ -183,7 +207,7 @@ document.getElementById('btn-download-non-compliance').addEventListener('click',
 
 async function runFixPipeline() {
   if (!latestNormativeDocName || !latestProgramDocName) {
-    toast('No hay documentos comparados para arreglar.', 'error');
+    toast(t('no_docs_to_fix', 'No hay documentos comparados para arreglar.'), 'error');
     return;
   }
 
@@ -206,9 +230,11 @@ async function runFixPipeline() {
   // Set the dynamic label inside the modal step text for step-fixer
   const fixerTextEl = document.querySelector('#step-fixer .step-text');
   if (fixerTextEl) {
-    fixerTextEl.textContent = `Agente Corrector: Modificando programa con ${provider === 'groq' ? 'Groq' : 'Gemini'}...`;
+    fixerTextEl.textContent = t('agent_corrector_modifying', 'Agente Corrector: Modificando programa con ') + (provider === 'groq' ? 'Groq' : 'Gemini') + '...';
   }
 
+  const lang = document.documentElement.lang || 'es';
+  
   try {
     const res = await fetch('/api/fix', {
       method: 'POST',
@@ -216,11 +242,12 @@ async function runFixPipeline() {
       body: JSON.stringify({
         normativeDocument: latestNormativeDocName,
         programDocument: latestProgramDocName,
-        provider: provider
+        provider: provider,
+        lang: lang
       })
     });
 
-    if (!res.ok) throw new Error('Error al iniciar el pipeline de corrección.');
+    if (!res.ok) throw new Error(t('fix_error_prefix', 'Error de corrección: ') + res.statusText);
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -247,7 +274,7 @@ async function runFixPipeline() {
             const dlBtn = document.getElementById('btn-download-pdf');
             dlBtn.href = data.downloadUrl;
             dlBtn.style.display = 'inline-flex';
-            toast('Corrección finalizada con éxito', 'success');
+            toast(t('fix_success', 'Corrección finalizada con éxito'), 'success');
           } else if (data.type === 'error') {
             throw new Error(data.error);
           }
@@ -257,7 +284,7 @@ async function runFixPipeline() {
       }
     }
   } catch (err) {
-    toast('Error de corrección: ' + err.message, 'error');
+    toast(t('fix_error_prefix', 'Error de corrección: ') + err.message, 'error');
     steps.forEach(s => {
       const el = document.getElementById('step-' + s);
       if (el && el.querySelector('.step-status').textContent === '⚡') {
