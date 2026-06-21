@@ -121,6 +121,10 @@ export interface StructuredCorrection {
   correctedText: string;
   /** Priority: 'alta' | 'media' | 'baja' */
   priority: string;
+  /** Optional: ID of the validated gap this correction addresses (for traceability) */
+  gapId?: string;
+  /** Optional: Status of the gap this correction addresses: 'partial' | 'missing' */
+  status?: string;
 }
 
 /**
@@ -139,9 +143,21 @@ export function parseCorrections(rawText: string): StructuredCorrection[] {
     const parsed = JSON.parse(cleaned);
     const items = parsed?.corrections ?? parsed;
     if (Array.isArray(items)) {
-      return items.filter(isValidCorrection).map(normalizeCorrection);
+      const validItems = items.filter(isValidCorrection);
+      const invalidCount = items.length - validItems.length;
+      if (invalidCount > 0) {
+        logger.warn('PDFGenerator', `Filtered out ${invalidCount} invalid corrections (missing section or correctedText)`);
+      }
+      const corrections = validItems.map(normalizeCorrection);
+      const partialCount = corrections.filter(c => c.status === 'partial').length;
+      const missingCount = corrections.filter(c => c.status === 'missing').length;
+      const unknownCount = corrections.filter(c => !c.status).length;
+      logger.info('PDFGenerator', `Successfully parsed ${corrections.length} corrections from structured JSON: ${partialCount} partial, ${missingCount} missing, ${unknownCount} unknown status`);
+      return corrections;
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    logger.warn('PDFGenerator', 'Failed to parse as complete JSON, falling back to object extraction', err as Error);
+  }
 
   // Fallback: extract complete JSON objects from the text
   const objects: any[] = [];
@@ -165,7 +181,18 @@ export function parseCorrections(rawText: string): StructuredCorrection[] {
     }
   }
 
-  return objects.filter(isValidCorrection).map(normalizeCorrection);
+  const validObjects = objects.filter(isValidCorrection);
+  const invalidCount = objects.length - validObjects.length;
+  if (invalidCount > 0) {
+    logger.warn('PDFGenerator', `Filtered out ${invalidCount} invalid corrections from fallback extraction`);
+  }
+  const corrections = validObjects.map(normalizeCorrection);
+  const partialCount = corrections.filter(c => c.status === 'partial').length;
+  const missingCount = corrections.filter(c => c.status === 'missing').length;
+  const unknownCount = corrections.filter(c => !c.status).length;
+  logger.info('PDFGenerator', `Extracted ${corrections.length} corrections using fallback: ${partialCount} partial, ${missingCount} missing, ${unknownCount} unknown status`);
+  
+  return corrections;
 }
 
 function isValidCorrection(obj: any): boolean {
@@ -179,6 +206,8 @@ function normalizeCorrection(obj: any): StructuredCorrection {
     justification: String(obj.justification ?? obj.justificacion ?? obj.reason ?? ''),
     correctedText: String(obj.correctedText ?? obj.corrected_text ?? obj.texto_corregido ?? ''),
     priority: String(obj.priority ?? obj.prioridad ?? 'media'),
+    gapId: obj.gapId ?? obj.gap_id ?? undefined,
+    status: obj.status ?? undefined,
   };
 }
 
@@ -201,6 +230,7 @@ export async function generateCorrectedProgramPDF(
   lang: string = 'es'
 ): Promise<Buffer> {
   logger.info('PDFGenerator', `Generating format-preserving corrected PDF for: ${programName} (lang: ${lang})`);
+  logger.info('PDFGenerator', `Received ${corrections.length} corrections to include in PDF annex`);
 
   const labels = getLabels(lang);
 
@@ -258,13 +288,19 @@ async function generateAppendixPDF(
   correctedText: string,
   labels: PdfLabels
 ): Promise<Buffer> {
+  logger.info('PDFGenerator', `Generating appendix PDF with ${corrections.length} corrections`);
+  
   return new Promise((resolve, reject) => {
     try {
       const chunks: Buffer[] = [];
+
+      // Reserve bottom margin so footer never overlaps body text
+      const BOTTOM_MARGIN = 60;
+
       const doc = new PDFDocumentKit({
         size: 'A4',
-        margin: 54,
-        bufferPages: true
+        margins: { top: 54, bottom: BOTTOM_MARGIN, left: 54, right: 54 },
+        bufferPages: true,
       });
 
       doc.on('data', (chunk) => chunks.push(chunk));
@@ -276,15 +312,24 @@ async function generateAppendixPDF(
       const pageHeight = doc.page.height;
       const writeWidth = pageWidth - margin * 2;
 
+      /** Available vertical space on the current page before the footer zone */
+      const availableY = () => pageHeight - BOTTOM_MARGIN - margin;
+
+      /** Ensures at least `needed` pts are available; adds a page if not. */
+      const ensureSpace = (needed: number) => {
+        if (doc.y + needed > availableY()) {
+          doc.addPage();
+        }
+      };
+
       const title = programName.replace(/\.pdf$/i, '').replace(/_/g, ' ');
 
-      // ── Separator / Cover page for the appendix ──────────────────────
+      // ── Cover page for the appendix ──────────────────────────────────────
       // Decorative top bar
       doc.rect(0, 0, pageWidth, 8).fill('#1e40af');
 
       doc.moveDown(4);
 
-      // Title block
       doc.fillColor('#1e293b')
          .font('Helvetica-Bold')
          .fontSize(22)
@@ -299,9 +344,13 @@ async function generateAppendixPDF(
 
       doc.moveDown(2);
 
-      // Info box
+      // Info box — measure each line individually then set Y below the box
       const boxY = doc.y;
-      doc.rect(margin, boxY, writeWidth, 80)
+      const BOX_LINE_H = 18;
+      const BOX_PAD_V = 12;
+      const infoBoxHeight = BOX_LINE_H * 3 + BOX_PAD_V * 2;
+
+      doc.rect(margin, boxY, writeWidth, infoBoxHeight)
          .lineWidth(1)
          .strokeColor('#cbd5e1')
          .fillAndStroke('#f8fafc', '#cbd5e1');
@@ -309,37 +358,35 @@ async function generateAppendixPDF(
       doc.fillColor('#334155')
          .font('Helvetica-Bold')
          .fontSize(10)
-         .text(labels.program, margin + 15, boxY + 12, { continued: true })
+         .text(labels.program, margin + 15, boxY + BOX_PAD_V, { continued: true })
          .font('Helvetica')
          .text(`  ${title}`);
 
       doc.fillColor('#334155')
          .font('Helvetica-Bold')
          .fontSize(10)
-         .text(labels.date, margin + 15, boxY + 30, { continued: true })
+         .text(labels.date, margin + 15, boxY + BOX_PAD_V + BOX_LINE_H, { continued: true })
          .font('Helvetica')
          .text(`  ${new Date().toLocaleDateString(labels.locale, { year: 'numeric', month: 'long', day: 'numeric' })}`);
 
       doc.fillColor('#334155')
          .font('Helvetica-Bold')
          .fontSize(10)
-         .text(labels.corrections, margin + 15, boxY + 48, { continued: true })
+         .text(labels.corrections, margin + 15, boxY + BOX_PAD_V + BOX_LINE_H * 2, { continued: true })
          .font('Helvetica')
          .text(`  ${corrections.length} ${labels.modificationsProposed}`);
 
-      doc.y = boxY + 95;
+      // Advance Y cursor to below the info box
+      doc.y = boxY + infoBoxHeight + 10;
 
-      doc.moveDown(1);
+      doc.moveDown(0.8);
 
       doc.fillColor('#64748b')
          .font('Helvetica')
          .fontSize(9)
-         .text(
-           labels.note,
-           { align: 'justify', width: writeWidth }
-         );
+         .text(labels.note, { align: 'justify', width: writeWidth });
 
-      doc.moveDown(2);
+      doc.moveDown(1.5);
 
       // Divider line
       doc.strokeColor('#e2e8f0')
@@ -350,21 +397,32 @@ async function generateAppendixPDF(
 
       doc.moveDown(1);
 
-      // ── Render each correction ───────────────────────────────────────
+      // ── Render each correction ─────────────────────────────────────────
       if (corrections.length > 0) {
         for (let idx = 0; idx < corrections.length; idx++) {
           const c = corrections[idx];
 
-          // Check if we need a new page (leave room for at least the header)
-          if (doc.y > pageHeight - 150) {
-            doc.addPage();
-          }
+          // Pre-measure heights for this block so we can decide upfront
+          // whether to add a page rather than splitting mid-block.
+          const justH = c.justification
+            ? doc.heightOfString(c.justification, { width: writeWidth - 12 }) + 8
+            : 0;
+          const textH = doc.heightOfString(c.correctedText, { width: writeWidth - 30 });
+          const boxH = textH + 16;
+          // Minimum block: header (22) + action line (20) + justification + text box + separator (12)
+          const totalBlockH = 22 + 20 + justH + boxH + 20;
+
+          // Add page if the full block won't fit; 80 is a soft minimum header-only threshold
+          ensureSpace(Math.min(totalBlockH, 80));
 
           // Priority color badge
           const priorityColors: Record<string, string> = {
             alta: '#dc2626',
+            high: '#dc2626',
             media: '#f59e0b',
+            medium: '#f59e0b',
             baja: '#22c55e',
+            low: '#22c55e',
           };
           const pColor = priorityColors[c.priority.toLowerCase()] || '#6b7280';
 
@@ -380,8 +438,7 @@ async function generateAppendixPDF(
           // Priority badge
           const badgeText = c.priority.toUpperCase();
           const badgeWidth = doc.widthOfString(badgeText) + 12;
-          doc.roundedRect(pageWidth - margin - badgeWidth - 5, headerY, badgeWidth, 16, 3)
-             .fill(pColor);
+          doc.roundedRect(pageWidth - margin - badgeWidth - 5, headerY, badgeWidth, 16, 3).fill(pColor);
           doc.fillColor('#ffffff')
              .font('Helvetica-Bold')
              .fontSize(8)
@@ -398,7 +455,7 @@ async function generateAppendixPDF(
              .fillColor('#475569')
              .text(c.action);
 
-          doc.moveDown(0.3);
+          doc.moveDown(0.4);
 
           // Justification
           if (c.justification) {
@@ -410,21 +467,14 @@ async function generateAppendixPDF(
                .fillColor('#475569')
                .text(c.justification, { width: writeWidth - 12 });
 
-            doc.moveDown(0.3);
+            doc.moveDown(0.4);
           }
 
-          // Corrected text box
-          const textBoxY = doc.y;
-          const textHeight = doc.heightOfString(c.correctedText, { width: writeWidth - 30 });
-          const boxHeight = textHeight + 16;
-
-          // Check page overflow for the text box
-          if (textBoxY + boxHeight > pageHeight - 60) {
-            doc.addPage();
-          }
+          // Corrected text box — ensure it fits on this page
+          ensureSpace(boxH + 20);
 
           const finalBoxY = doc.y;
-          doc.rect(margin + 8, finalBoxY, writeWidth - 8, boxHeight)
+          doc.rect(margin + 8, finalBoxY, writeWidth - 8, boxH)
              .lineWidth(0.5)
              .fillAndStroke('#f0fdf4', '#bbf7d0');
 
@@ -434,10 +484,10 @@ async function generateAppendixPDF(
              .text(c.correctedText, margin + 20, finalBoxY + 8, {
                width: writeWidth - 30,
                align: 'justify',
-               lineGap: 2
+               lineGap: 2,
              });
 
-          doc.y = finalBoxY + boxHeight + 12;
+          doc.y = finalBoxY + boxH + 12;
 
           // Separator between corrections
           if (idx < corrections.length - 1) {
@@ -449,6 +499,7 @@ async function generateAppendixPDF(
             doc.moveDown(0.8);
           }
         }
+        logger.info('PDFGenerator', `Successfully rendered all ${corrections.length} corrections in PDF`);
       } else {
         // No structured corrections — render the raw corrected text
         doc.fillColor('#475569')
@@ -460,12 +511,9 @@ async function generateAppendixPDF(
           const trimmed = line.trim();
           if (!trimmed) continue;
 
-          if (doc.y > pageHeight - 80) {
-            doc.addPage();
-          }
-
           // Basic markdown-like rendering for fallback
           if (trimmed.startsWith('# ')) {
+            ensureSpace(30);
             doc.moveDown(0.8);
             const currentY = doc.y;
             doc.rect(margin, currentY, 4, 16).fill('#1e40af');
@@ -475,6 +523,7 @@ async function generateAppendixPDF(
                .text(trimmed.substring(2), margin + 12, currentY + 1, { width: writeWidth - 12 });
             doc.moveDown(0.6);
           } else if (trimmed.startsWith('## ')) {
+            ensureSpace(24);
             doc.moveDown(0.4);
             doc.fillColor('#334155')
                .font('Helvetica-Bold')
@@ -482,38 +531,43 @@ async function generateAppendixPDF(
                .text(trimmed.substring(3), { width: writeWidth });
             doc.moveDown(0.4);
           } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+            const lh = doc.heightOfString('•  ' + trimmed.substring(2), { width: writeWidth - 15 });
+            ensureSpace(lh + 6);
             doc.fillColor('#475569')
                .font('Helvetica')
                .fontSize(9)
                .text('•  ' + trimmed.substring(2), margin + 15, doc.y, {
                  width: writeWidth - 15,
                  align: 'justify',
-                 lineGap: 2
+                 lineGap: 2,
                });
             doc.moveDown(0.3);
           } else {
+            const lh = doc.heightOfString(trimmed, { width: writeWidth });
+            ensureSpace(lh + 6);
             doc.fillColor('#475569')
                .font('Helvetica')
                .fontSize(9)
                .text(trimmed, {
                  width: writeWidth,
                  align: 'justify',
-                 lineGap: 2
+                 lineGap: 2,
                });
             doc.moveDown(0.4);
           }
         }
       }
 
-      // ── Headers and Footers ──────────────────────────────────────────
+      // ── Headers and Footers ──────────────────────────────────────────────
       const pages = doc.bufferedPageRange();
       for (let j = 0; j < pages.count; j++) {
         doc.switchToPage(j);
 
-        const oldBottom = doc.page.margins.bottom;
+        // Temporarily remove bottom margin so we can draw in the footer zone
+        const savedBottom = doc.page.margins.bottom;
         doc.page.margins.bottom = 0;
 
-        // Header
+        // Header (skip cover page)
         if (j > 0) {
           doc.fontSize(8)
              .fillColor('#94a3b8')
@@ -540,7 +594,7 @@ async function generateAppendixPDF(
            .text(labels.footerText, margin, pageHeight - 36, { align: 'left', continued: true })
            .text(`${labels.page} ${j + 1} ${labels.of} ${pages.count}`, pageWidth - margin - 80, pageHeight - 36, { width: 80, align: 'right' });
 
-        doc.page.margins.bottom = oldBottom;
+        doc.page.margins.bottom = savedBottom;
       }
 
       doc.end();

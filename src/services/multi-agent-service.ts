@@ -184,6 +184,21 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
       const validatedComplianceAnalysis = context.state.get<string>('app:validated_compliance_analysis') || '';
       const originalStructure = context.state.get<string>('app:original_structure') || '';
       
+      // Parse validated gaps to count them for verification
+      let validatedGapsCount = 0;
+      let partialCount = 0;
+      let missingCount = 0;
+      try {
+        const parsed = JSON.parse(validatedComplianceAnalysis);
+        const gaps = parsed?.validatedGaps || [];
+        validatedGapsCount = gaps.length;
+        partialCount = gaps.filter((g: any) => g.status === 'partial').length;
+        missingCount = gaps.filter((g: any) => g.status === 'missing').length;
+        logger.info('ProgramFixerAgent', `Found ${validatedGapsCount} validated gaps: ${partialCount} partial + ${missingCount} missing`);
+      } catch (err) {
+        logger.warn('ProgramFixerAgent', 'Could not parse validatedGaps count from compliance analysis', err as Error);
+      }
+      
       return `Eres el agente especialista en adecuación curricular de planes de estudio universitarios. Tu tarea es generar un listado ESTRUCTURADO de correcciones que deben aplicarse al programa de estudios original para cubrir únicamente las brechas normativas REALES y VALIDADAS.
 
       IMPORTANTE: NO reescribas el documento completo. El documento original se preservará tal cual está. Solo necesitás listar las correcciones puntuales.
@@ -201,9 +216,17 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
       TEXTO ORIGINAL DEL PROGRAMA (referencia):
       ${originalText}
       
-      OBLIGACIÓN DE COBERTURA EXHAUSTIVA DE BRECHAS:
-      - Debes revisar cada una de las brechas reales en "validatedGaps" de "Brechas de Cumplimiento Validadas".
-      - Para CADA UNA de las brechas listadas en "validatedGaps", debes generar una corrección independiente en el array "corrections". No las agrupes de forma genérica ni las resumas en un único objeto de corrección. Si hay N brechas validadas, debe haber exactamente N correcciones en el array resultante. Esto es obligatorio para asegurar que todas las faltantes aparezcan de forma explícita y separada en el anexo de correcciones del documento PDF final.
+      ⚠️ OBLIGACIÓN CRÍTICA DE COBERTURA EXHAUSTIVA DE BRECHAS:
+      - Las "Brechas de Cumplimiento Validadas" contienen un array "validatedGaps" con ${validatedGapsCount} no conformidades detectadas.
+      - Debes revisar CADA UNA de las ${validatedGapsCount} brechas en el array "validatedGaps".
+      - IMPORTANTE: Las brechas pueden tener status "missing" (faltante completo) o "partial" (parcialmente cubierto). Ambos tipos REQUIEREN corrección y DEBEN incluirse en tu respuesta.
+      - Para CADA brecha validada (tanto "partial" como "missing"), debes generar EXACTAMENTE UNA corrección independiente en el array "corrections".
+      - Las brechas "partial" son tan importantes como las "missing" - indican que el programa menciona el tema pero no lo desarrolla suficientemente según la normativa.
+      - NO agrupes múltiples brechas en una sola corrección genérica.
+      - NO resumas ni omitas ninguna brecha, especialmente las "partial".
+      - El array "corrections" de tu respuesta DEBE contener exactamente ${validatedGapsCount} elementos (uno por brecha validada).
+      - Si hay ${validatedGapsCount} brechas validadas, debe haber exactamente ${validatedGapsCount} correcciones en el array resultante.
+      - Esto es OBLIGATORIO para asegurar que todas las no conformidades aparezcan de forma explícita y separada en el anexo de correcciones del documento PDF final.
       
       INSTRUCCIONES DE IDIOMA Y FORMATO DE SALIDA:
       - Todos los campos de texto descriptivos y propuestas de adecuación ("justification", "correctedText") deben estar redactados obligatoriamente en idioma ${targetLangName}.
@@ -213,11 +236,19 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
         {
           "section": "Nombre exacto de la sección del documento original donde aplicar la corrección (ej: 'Objetivos', 'Contenidos Mínimos', 'Metodología de Enseñanza')",
           "action": "agregar | modificar | enriquecer",
-          "justification": "Explicación breve de por qué es necesaria esta corrección según la normativa",
+          "justification": "Explicación breve de por qué es necesaria esta corrección según la normativa, citando el ID de la brecha validada y su status (partial o missing)",
           "correctedText": "El texto completo que debe incorporarse o reemplazar al existente en esa sección",
-          "priority": "alta | media | baja"
+          "priority": "alta | media | baja",
+          "gapId": "ID de la brecha validada que esta corrección resuelve (para trazabilidad)",
+          "status": "partial | missing (copiado del validatedGap correspondiente)"
         }
       ]}
+      
+      EJEMPLO DE CÓMO MANEJAR BRECHAS PARCIALES:
+      Si una brecha tiene status "partial" con evidence: "Se menciona metodología activa pero no se detallan actividades específicas", 
+      tu corrección debe usar action: "enriquecer" y proporcionar el texto que COMPLETA lo que ya existe.
+      
+      Si una brecha tiene status "missing", usa action: "agregar" y proporciona el texto completo que debe agregarse.
       
       DIRECTIVAS DE INTEGRACIÓN PEDAGÓGICA:
       - Integrá transversalmente las competencias faltantes en asignaturas y proyectos existentes.
@@ -225,6 +256,11 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
       - Enriquecé los espacios de integración curricular existentes (proyectos integradores, trabajos finales).
       - Cada corrección debe ser autónoma y aplicable directamente sobre el documento original.
       - Si no hay brechas reales en validatedComplianceAnalysis (es decir, validatedGaps está vacío), devuelve un array "corrections" vacío: {"corrections": []}. NO inventes correcciones si no hay brechas reales validadas.
+      
+      ⚠️ VERIFICACIÓN FINAL ANTES DE RESPONDER:
+      - Cuenta cuántos elementos hay en tu array "corrections" antes de devolver la respuesta.
+      - Verifica que el número coincida exactamente con el número de elementos en "validatedGaps" (${validatedGapsCount}).
+      - Si no coinciden, revisa qué brechas olvidaste y agrégalas.
       
       Generá únicamente el JSON de correcciones.`;
     }
