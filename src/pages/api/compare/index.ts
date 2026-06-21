@@ -3,8 +3,10 @@
  * POST /api/compare       — Runs a full comparison between normative and program PDFs
  */
 import type { APIRoute } from 'astro';
-import { getServices, originalPdfBuffers, savePdfBufferToDisk } from '../../../lib/services';
+import { getServices, originalPdfBuffers, savePdfBufferToDisk, correctedPdfs } from '../../../lib/services';
 import { createLogger } from '../../../services/logger';
+import { runCorrectionPipeline } from '../../../services/multi-agent-service';
+import { generateCorrectedProgramPDF, parseCorrections } from '../../../services/pdf-generator';
 
 const logger = createLogger();
 import pdfParse from 'pdf-parse';
@@ -25,7 +27,7 @@ export const GET: APIRoute = async () => {
   }
 };
 
-export const POST: APIRoute = async ({ request }) => {
+export const POST: APIRoute = async ({ request, cookies }) => {
   try {
     const { comparisonService, graphBuilder } = await getServices();
     const formData = await request.formData();
@@ -33,6 +35,7 @@ export const POST: APIRoute = async ({ request }) => {
     const normFile = formData.get('normative') as File | null;
     const progFile = formData.get('program') as File | null;
     const provider = formData.get('provider') as string | null || undefined;
+    const lang = cookies.get('app_lang')?.value || 'es';
 
     if (!normFile || !progFile) {
       return new Response(JSON.stringify({ success: false, error: 'Se requieren dos archivos: "normative" y "program"' }), {
@@ -54,42 +57,167 @@ export const POST: APIRoute = async ({ request }) => {
     savePdfBufferToDisk(normFile.name, normBuffer);
     logger.info('API', `Stored original PDF buffers: ${progFile.name} (${progBuffer.length} bytes), ${normFile.name} (${normBuffer.length} bytes)`);
 
-    const normPdf = await pdfParse(normBuffer);
-    const progPdf = await pdfParse(progBuffer);
+    const encoder = new TextEncoder();
 
-    if (!normPdf.text?.trim()) {
-      return new Response(JSON.stringify({ success: false, error: 'No se pudo extraer texto del documento normativo' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    if (!progPdf.text?.trim()) {
-      return new Response(JSON.stringify({ success: false, error: 'No se pudo extraer texto del programa' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          // 1. Initial Comparison / Ontology Extraction
+          controller.enqueue(encoder.encode(
+            JSON.stringify({ type: 'progress', step: 'ComparisonService', content: 'Extrayendo ontología y comparando documentos...', isFinal: false }) + '\n'
+          ));
 
-    const clearPrevious = formData.get('clearPrevious') === 'true';
-    const report = await comparisonService.fullComparison(normPdf.text, progPdf.text, normFile.name, progFile.name, provider);
+          const normPdf = await pdfParse(normBuffer);
+          const progPdf = await pdfParse(progBuffer);
 
-    try {
-      if (clearPrevious) {
-        await graphBuilder.clearPreviousComparisons();
-        logger.info('API', 'Cleared previous comparisons from Neo4j');
+          if (!normPdf.text?.trim()) {
+            throw new Error('No se pudo extraer texto del documento normativo');
+          }
+          if (!progPdf.text?.trim()) {
+            throw new Error('No se pudo extraer texto del programa');
+          }
+
+          const clearPrevious = formData.get('clearPrevious') === 'true';
+          const report = await comparisonService.fullComparison(
+            normPdf.text,
+            progPdf.text,
+            normFile.name,
+            progFile.name,
+            provider,
+            (content) => {
+              controller.enqueue(encoder.encode(
+                JSON.stringify({ type: 'progress', step: 'ComparisonService', content, isFinal: false }) + '\n'
+              ));
+            }
+          );
+
+          if (clearPrevious) {
+            await graphBuilder.clearPreviousComparisons();
+            logger.info('API', 'Cleared previous comparisons from Neo4j');
+          }
+          await graphBuilder.saveComparisonReport(report);
+          logger.info('API', 'Successfully saved comparison report to Neo4j');
+
+          controller.enqueue(encoder.encode(
+            JSON.stringify({ type: 'progress', step: 'ComparisonService', content: 'Comparación inicial guardada. Iniciando pipeline de agentes...', isFinal: true }) + '\n'
+          ));
+
+          // 2. Run multi-agent pipeline
+          const pipeline = runCorrectionPipeline(normFile.name, progFile.name, graphBuilder, provider, lang);
+          let correctedText = '';
+          let validatedComplianceText = '';
+
+          for await (const update of pipeline) {
+            controller.enqueue(encoder.encode(
+              JSON.stringify({ type: 'progress', step: update.step, content: update.content, isFinal: update.isFinal }) + '\n'
+            ));
+            if (update.step === 'ProgramFixerAgent' && update.isFinal) {
+              correctedText = update.content;
+            }
+            if (update.step === 'ComplianceValidatorAgent' && update.isFinal) {
+              validatedComplianceText = update.content;
+            }
+          }
+
+          if (!correctedText) {
+            throw new Error('El agente corrector no generó ningún contenido corregido.');
+          }
+
+          // 3. Parse corrections and update Neo4j
+          controller.enqueue(encoder.encode(
+            JSON.stringify({ type: 'progress', step: 'PDFGenerator', content: 'Procesando validación del agente y actualizando reporte...', isFinal: false }) + '\n'
+          ));
+
+          const corrections = parseCorrections(correctedText);
+
+          let validatedGaps: any[] = [];
+          let excludedGaps: any[] = [];
+          if (validatedComplianceText) {
+            try {
+              const cleanedText = validatedComplianceText.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim();
+              const parsed = JSON.parse(cleanedText);
+              validatedGaps = parsed.validatedGaps || [];
+              excludedGaps = parsed.excludedGaps || [];
+              logger.info('API', `Parsed validated compliance analysis: ${validatedGaps.length} validated, ${excludedGaps.length} excluded`);
+            } catch (err) {
+              logger.warn('API', 'Could not parse validated compliance analysis output as JSON', err as Error);
+            }
+          }
+
+          // Update report results based on validated compliance gaps
+          const validatedGapsMap = new Map(validatedGaps.map((g: any) => [g.id, g]));
+          const excludedGapsMap = new Map(excludedGaps.map((g: any) => [g.id, g]));
+
+          for (const result of report.results) {
+            const reqId = result.item.id;
+            if (excludedGapsMap.has(reqId)) {
+              const excl = excludedGapsMap.get(reqId);
+              result.status = 'covered';
+              result.evidence = excl.reason || result.evidence;
+              result.suggestion = 'Ninguna';
+            } else if (validatedGapsMap.has(reqId)) {
+              const val = validatedGapsMap.get(reqId);
+              result.status = val.status as 'partial' | 'missing';
+              result.evidence = val.evidence || result.evidence;
+              result.suggestion = val.suggestion || result.suggestion;
+            }
+          }
+
+          // Recalculate summary metrics
+          const covered = report.results.filter((r) => r.status === 'covered').length;
+          const partial = report.results.filter((r) => r.status === 'partial').length;
+          const missing = report.results.filter((r) => r.status === 'missing').length;
+          const total   = report.results.length;
+          const coveragePercent = total > 0
+            ? Math.round(((covered + partial * 0.5) / total) * 100)
+            : 0;
+
+          report.summary = { total, covered, partial, missing, coveragePercent };
+
+          // Save the updated comparison report back to Neo4j
+          await graphBuilder.saveComparisonReport(report);
+          logger.info('API', 'Updated comparison report with validated/excluded gaps saved in Neo4j');
+
+          // Save corrections list to the graph
+          await graphBuilder.saveCorrections(progFile.name, corrections, correctedText);
+
+          // Generate corrected PDF and cache it
+          const pdfBuffer = await generateCorrectedProgramPDF(progFile.name, progBuffer, corrections, correctedText, lang);
+          const downloadName = progFile.name.replace(/\.pdf$/i, '') + '_corregido.pdf';
+          correctedPdfs.set(downloadName, pdfBuffer);
+          logger.info('API', `Generated corrected PDF and cached as: ${downloadName} (${pdfBuffer.length} bytes)`);
+
+          // Fetch the final saved report from Neo4j to return it
+          const finalReport = await graphBuilder.getLatestComparison();
+
+          controller.enqueue(encoder.encode(
+            JSON.stringify({
+              type: 'complete',
+              data: finalReport || report,
+              downloadUrl: `/api/fix/download/${encodeURIComponent(downloadName)}`,
+            }) + '\n'
+          ));
+
+          controller.close();
+        } catch (error: any) {
+          logger.error('API', 'Error running comparison or fix pipeline', error);
+          controller.enqueue(encoder.encode(
+            JSON.stringify({ type: 'error', error: error.message }) + '\n'
+          ));
+          controller.close();
+        }
       }
-      await graphBuilder.saveComparisonReport(report);
-      logger.info('API', 'Successfully saved comparison report to Neo4j');
-    } catch (err: any) {
-      logger.error('API', 'Failed to save comparison to graph', err);
-    }
+    });
 
-    return new Response(JSON.stringify({ success: true, data: report }), {
-      headers: { 'Content-Type': 'application/json' },
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Transfer-Encoding': 'chunked',
+      },
     });
   } catch (error: any) {
-    logger.error('API', 'Error in comparison', error);
-    return new Response(JSON.stringify({ success: false, error: error.message }), {
+    logger.error('API', 'Error starting comparison pipeline', error);
+    return new Response(JSON.stringify({ type: 'error', error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

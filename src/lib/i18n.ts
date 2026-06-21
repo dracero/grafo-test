@@ -185,6 +185,12 @@ export const translations = {
     'compare.js.status_covered': 'Cubierto',
     'compare.js.status_partial': 'Parcial',
     'compare.js.status_missing': 'Faltante',
+    'compare.js.proposed_correction': 'Propuesta de Adecuación (Anexo PDF)',
+    'compare.js.target_section': 'Sección de destino',
+    'compare.js.action': 'Acción',
+    'compare.js.priority': 'Prioridad',
+    'compare.js.text_to_integrate': 'Texto a incorporar',
+    'compare.js.justification': 'Justificación',
 
     // App.js client keys
     'app.js.loading_graph': 'Cargando grafo...',
@@ -394,6 +400,12 @@ export const translations = {
     'compare.js.status_covered': 'Cuberto',
     'compare.js.status_partial': 'Parcial',
     'compare.js.status_missing': 'Faltante',
+    'compare.js.proposed_correction': 'Proposta de Adecuación (Anexo PDF)',
+    'compare.js.target_section': 'Sección de destino',
+    'compare.js.action': 'Acción',
+    'compare.js.priority': 'Prioridade',
+    'compare.js.text_to_integrate': 'Texto a incorporar',
+    'compare.js.justification': 'Xustificación',
 
     // App.js client keys
     'app.js.loading_graph': 'Cargando grafo...',
@@ -603,6 +615,12 @@ export const translations = {
     'compare.js.status_covered': 'Covered',
     'compare.js.status_partial': 'Partial',
     'compare.js.status_missing': 'Missing',
+    'compare.js.proposed_correction': 'Proposed Correction (PDF Annex)',
+    'compare.js.target_section': 'Target section',
+    'compare.js.action': 'Action',
+    'compare.js.priority': 'Priority',
+    'compare.js.text_to_integrate': 'Text to integrate',
+    'compare.js.justification': 'Justification',
 
     // App.js client keys
     'app.js.loading_graph': 'Loading graph...',
@@ -811,6 +829,12 @@ export const translations = {
     'compare.js.status_covered': 'Coberto',
     'compare.js.status_partial': 'Parcial',
     'compare.js.status_missing': 'Faltante',
+    'compare.js.proposed_correction': 'Proposta de Adequação (Anexo PDF)',
+    'compare.js.target_section': 'Seção de destino',
+    'compare.js.action': 'Ação',
+    'compare.js.priority': 'Prioridade',
+    'compare.js.text_to_integrate': 'Texto a incorporar',
+    'compare.js.justification': 'Justificação',
 
     // App.js client keys
     'app.js.loading_graph': 'Carregando grafo...',

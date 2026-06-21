@@ -189,7 +189,8 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
       let partialCount = 0;
       let missingCount = 0;
       try {
-        const parsed = JSON.parse(validatedComplianceAnalysis);
+        const cleanedText = validatedComplianceAnalysis.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim();
+        const parsed = JSON.parse(cleanedText);
         const gaps = parsed?.validatedGaps || [];
         validatedGapsCount = gaps.length;
         partialCount = gaps.filter((g: any) => g.status === 'partial').length;

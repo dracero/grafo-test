@@ -75,6 +75,8 @@ export interface ComparisonReport {
   timestamp: string;
   normativeText?: string;
   programText?: string;
+  correctionsJson?: string | null;
+  correctedText?: string | null;
 }
 
 // ── JSON recovery helpers ──────────────────────────────────────────────────
@@ -595,13 +597,19 @@ ${programList}`;
     programText: string,
     normativeName: string,
     programName: string,
-    provider?: string
+    provider?: string,
+    onProgress?: (content: string) => void
   ): Promise<ComparisonReport> {
     logger.info('Comparison', `Iniciando comparación: "${normativeName}" vs "${programName}" con proveedor: ${provider || 'default'}`);
     logger.info('Comparison', `Normativo: ${normativeText.length} chars | Programa: ${programText.length} chars`);
 
+    onProgress?.('Extrayendo ontología del documento normativo...');
     const ontology        = await this.extractOntology(normativeText, provider);
+    
+    onProgress?.('Extrayendo ontología del programa...');
     const programOntology = await this.extractProgramOntology(programText, provider);
+    
+    onProgress?.('Comparando requisitos normativos con el programa...');
     const results         = await this.compareOntologies(ontology, programOntology, provider);
 
     const covered = results.filter((r) => r.status === 'covered').length;

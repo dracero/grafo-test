@@ -30,13 +30,21 @@ async function startDatabases() {
     console.log('✔ MongoDB is already running on port 27017.');
   } else {
     console.log('⏳ MongoDB is not running. Starting via Docker (mongo:4.4)...');
-    const containerExists = runCommand('docker ps -a --filter name=mongodb-local --format "{{.Names}}"');
+    const containerExists = runCommand('docker ps -a --filter name=^/mongodb-local$ --format "{{.Names}}"');
     if (containerExists === 'mongodb-local') {
-      console.log('   Removing existing mongodb-local container to ensure correct configuration...');
-      runCommand('docker rm -f mongodb-local');
+      const inspectVolume = runCommand('docker inspect --format "{{ range .Mounts }}{{ .Name }} {{ end }}" mongodb-local');
+      if (inspectVolume.includes('mongodb-data')) {
+        console.log('   Starting existing mongodb-local container with persistent volume...');
+        runCommand('docker start mongodb-local');
+      } else {
+        console.log('   Removing existing mongodb-local container without persistent volume to enable persistence...');
+        runCommand('docker rm -f mongodb-local');
+        runCommand('docker run -d --name mongodb-local -v mongodb-data:/data/db -p 27017:27017 mongo:4.4');
+      }
+    } else {
+      console.log('   Creating and starting new container mongodb-local using mongo:4.4 with persistent volume...');
+      runCommand('docker run -d --name mongodb-local -v mongodb-data:/data/db -p 27017:27017 mongo:4.4');
     }
-    console.log('   Creating and starting new container mongodb-local using mongo:4.4 (non-AVX compatible)...');
-    runCommand('docker run -d --name mongodb-local -p 27017:27017 mongo:4.4');
     
     // Wait for port to open
     for (let i = 0; i < 20; i++) {
@@ -56,13 +64,20 @@ async function startDatabases() {
     console.log('✔ Neo4j is already running on port 7687.');
   } else {
     console.log('⏳ Neo4j is not running. Starting via Docker...');
-    const containerExists = runCommand('docker ps -a --filter name=neo4j-local --format "{{.Names}}"');
+    const containerExists = runCommand('docker ps -a --filter name=^/neo4j-local$ --format "{{.Names}}"');
     if (containerExists === 'neo4j-local') {
-      console.log('   Container neo4j-local exists. Starting it...');
-      runCommand('docker start neo4j-local');
+      const inspectVolume = runCommand('docker inspect --format "{{ range .Mounts }}{{ .Name }} {{ end }}" neo4j-local');
+      if (inspectVolume.includes('neo4j-data')) {
+        console.log('   Container neo4j-local exists. Starting it...');
+        runCommand('docker start neo4j-local');
+      } else {
+        console.log('   Removing existing neo4j-local container without persistent volume to enable persistence...');
+        runCommand('docker rm -f neo4j-local');
+        runCommand('docker run -d --name neo4j-local -v neo4j-data:/data -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password -e NEO4J_PLUGINS=\'["apoc"]\' neo4j:5.20.0-community');
+      }
     } else {
-      console.log('   Creating and starting new container neo4j-local...');
-      runCommand('docker run -d --name neo4j-local -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password -e NEO4J_PLUGINS=\'["apoc"]\' neo4j:5.20.0-community');
+      console.log('   Creating and starting new container neo4j-local with persistent volume...');
+      runCommand('docker run -d --name neo4j-local -v neo4j-data:/data -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password -e NEO4J_PLUGINS=\'["apoc"]\' neo4j:5.20.0-community');
     }
     // Wait for port to open
     for (let i = 0; i < 20; i++) {

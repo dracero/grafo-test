@@ -7,14 +7,14 @@ class ApiKeyManager {
   private currentIndex = 0;
 
   constructor() {
-    this.init();
+    this.init(true);
   }
 
   /**
    * Initializes the manager by reading key lists from env variables.
    * Runs synchronously on module load.
    */
-  private init() {
+  public init(suppressWarning = false) {
     // If we are in client side, process.env might not be populated in same way.
     // In Astro, server-side process.env is fully available.
     const keysEnv = typeof process !== 'undefined' && process.env ? process.env.GOOGLE_API_KEYS : undefined;
@@ -34,7 +34,9 @@ class ApiKeyManager {
     }
 
     if (this.keys.length === 0) {
-      logger.warn('ApiKeyManager', 'No Google API keys found in GOOGLE_API_KEYS or GOOGLE_API_KEY env vars.');
+      if (!suppressWarning) {
+        logger.warn('ApiKeyManager', 'No Google API keys found in GOOGLE_API_KEYS or GOOGLE_API_KEY env vars.');
+      }
     } else {
       logger.info('ApiKeyManager', `Loaded ${this.keys.length} Google API key(s) for rotation.`);
     }
@@ -46,7 +48,7 @@ class ApiKeyManager {
   getCurrentKey(): string {
     if (this.keys.length === 0) {
       // Re-try loading in case env variables were loaded later (e.g. dotenv config lag)
-      this.init();
+      this.init(false);
       if (this.keys.length === 0) {
         return (typeof process !== 'undefined' && process.env ? process.env.GOOGLE_API_KEY : undefined) || '';
       }

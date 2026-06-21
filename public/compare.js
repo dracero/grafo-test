@@ -13,6 +13,16 @@ let normativeFile = null;
 let programFile = null;
 let latestNormativeDocName = '';
 let latestProgramDocName = '';
+let latestCorrectedPdfUrl = '';
+let latestCorrections = [];
+
+function getPriorityColor(priority) {
+  const p = (priority || '').toLowerCase();
+  if (p === 'alta' || p === 'high') return 'var(--accent-rose)';
+  if (p === 'media' || p === 'medium') return 'var(--accent-amber)';
+  if (p === 'baja' || p === 'low') return 'var(--accent-emerald)';
+  return 'var(--text-muted)';
+}
 
 // Load previous comparison on page load
 document.addEventListener('DOMContentLoaded', async () => {
@@ -77,8 +87,10 @@ async function runComparison() {
 
   const progress = document.getElementById('progress-bar');
   progress.classList.add('active');
-  document.getElementById('progress-status').textContent = t('extracting_ontology', 'Extrayendo ontología del documento normativo...');
+  const progressStatus = document.getElementById('progress-status');
+  progressStatus.textContent = t('extracting_ontology', 'Extrayendo ontología del documento normativo...');
   document.getElementById('results-section').classList.remove('visible');
+  latestCorrectedPdfUrl = '';
 
   try {
     const provider = document.getElementById('model-provider')?.value || 'gemini';
@@ -89,14 +101,60 @@ async function runComparison() {
     formData.append('provider', provider);
 
     const res = await fetch('/api/compare', { method: 'POST', body: formData });
-    const json = await res.json();
+    if (!res.ok) throw new Error(t('error_prefix', 'Error de comparación: ') + res.statusText);
 
-    if (!json.success) throw new Error(json.error);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    progress.classList.remove('active');
-    renderResults(json.data);
-    document.getElementById('results-section').classList.add('visible');
-    toast(t('comparison_completed', 'Comparación completada'), 'success');
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const data = JSON.parse(line);
+          if (data.type === 'progress') {
+            if (data.step === 'ComparisonService') {
+              progressStatus.textContent = data.content;
+            } else if (data.step === 'NormativeOntologyAgent') {
+              progressStatus.textContent = `📋 Agente Ontología Normativa: Analizando requisitos...`;
+            } else if (data.step === 'ProgramOntologyAgent') {
+              progressStatus.textContent = `📚 Agente Ontología Programa: Analizando temas...`;
+            } else if (data.step === 'StructureAnalyzerAgent') {
+              progressStatus.textContent = `🔍 Agente Estructura Programa: Analizando estructura...`;
+            } else if (data.step === 'ComplianceGapsAgent') {
+              progressStatus.textContent = `⚡ Agente Brechas Cumplimiento: Identificando desviaciones...`;
+            } else if (data.step === 'ComplianceValidatorAgent') {
+              progressStatus.textContent = `✅ Agente Validador: Filtrando falsos positivos...`;
+            } else if (data.step === 'ProgramFixerAgent') {
+              progressStatus.textContent = `🔧 Agente Corrector: Modificando programa...`;
+            } else if (data.step === 'PDFGenerator') {
+              progressStatus.textContent = data.content;
+            }
+          } else if (data.type === 'complete') {
+            progress.classList.remove('active');
+            
+            if (data.downloadUrl) {
+              latestCorrectedPdfUrl = data.downloadUrl;
+            }
+            
+            renderResults(data.data);
+            document.getElementById('results-section').classList.add('visible');
+            toast(t('comparison_completed', 'Comparación completada'), 'success');
+          } else if (data.type === 'error') {
+            throw new Error(data.error);
+          }
+        } catch (e) {
+          console.error('Error parsing streaming line:', e, line);
+        }
+      }
+    }
   } catch (err) {
     progress.classList.remove('active');
     toast(t('error_prefix', 'Error: ') + err.message, 'error');
@@ -114,6 +172,19 @@ function renderResults(report) {
   document.getElementById('display-program-name').textContent = report.programDocument || '—';
   latestNormativeDocName = report.normativeDocument || '';
   latestProgramDocName = report.programDocument || '';
+
+  if (report.programDocument && report.correctionsJson) {
+    const downloadName = report.programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
+    latestCorrectedPdfUrl = `/api/fix/download/${encodeURIComponent(downloadName)}`;
+    try {
+      latestCorrections = JSON.parse(report.correctionsJson);
+    } catch (e) {
+      console.error('Failed to parse correctionsJson:', e);
+      latestCorrections = [];
+    }
+  } else {
+    latestCorrections = [];
+  }
 
   const hasGaps = s.partial > 0 || s.missing > 0;
   document.getElementById('btn-fix').style.display = hasGaps ? 'block' : 'none';
@@ -173,31 +244,59 @@ function renderTable(results, filter) {
         <button class="filter-tab ${filter==='missing'?'active':''}" onclick="renderTable(currentResults,'missing')">${t('filter_missing', 'Faltantes')}</button>
       </div>
     </div>
-    ${filtered.map(r => `
-      <div class="result-row">
-        <div class="result-row-header">
-          <span class="status-badge status-${r.status}">${statusIcon[r.status]} ${statusLabel[r.status]}</span>
-          <span class="result-id">${esc(r.item.id)}</span>
-          <span class="result-category">${esc(r.item.category)}</span>
-          <span class="result-requirement">${esc(r.item.requirement)}</span>
-        </div>
-        <div class="result-details">
-          <div class="result-detail-box evidence">
-            <div class="detail-label">${t('evidence', 'Evidencia')}</div>
-            <div class="detail-text">${esc(r.evidence) || '—'}</div>
+    ${filtered.map(r => {
+      const corr = latestCorrections.find(c => String(c.gapId || '').toLowerCase() === String(r.item.id || '').toLowerCase());
+      let correctionHtml = '';
+      if (corr) {
+        const pColor = getPriorityColor(corr.priority);
+        correctionHtml = `
+          <div class="result-detail-box correction" style="grid-column: span 2; border-left: 3px solid var(--accent-emerald); background: rgba(16, 185, 129, 0.04); padding: 12px 16px; margin-top: 8px;">
+            <div class="detail-label" style="color: var(--accent-emerald); font-weight: 700;">🔧 ${t('proposed_correction', 'Propuesta de Adecuación (Anexo PDF)')}</div>
+            <div style="display: flex; gap: 16px; margin: 8px 0; font-size: 0.8rem; color: var(--text-secondary); flex-wrap: wrap;">
+              <div><strong>${t('target_section', 'Sección de destino')}:</strong> ${esc(corr.section)}</div>
+              <div><strong>${t('action', 'Acción')}:</strong> <span class="status-badge status-covered" style="padding: 1px 6px; font-size: 0.65rem; text-transform: uppercase;">${esc(corr.action)}</span></div>
+              <div><strong>${t('priority', 'Prioridad')}:</strong> <span class="status-badge" style="background: ${pColor}; color: white; padding: 1px 6px; font-size: 0.65rem; text-transform: uppercase; border-radius: 4px;">${esc(corr.priority)}</span></div>
+            </div>
+            <div class="detail-text" style="margin-bottom: 8px; font-size: 0.8rem; line-height: 1.5;"><strong>${t('justification', 'Justificación')}:</strong> ${esc(corr.justification)}</div>
+            <div class="detail-label" style="margin-top: 8px; font-size: 0.68rem;">${t('text_to_integrate', 'Texto a incorporar')}:</div>
+            <pre style="background: var(--bg-primary); border: 1px solid var(--border-light); padding: 10px 14px; border-radius: var(--radius-sm); font-size: 0.8rem; color: var(--text-primary); white-space: pre-wrap; font-family: var(--font-sans); margin: 6px 0 0 0; max-height: 250px; overflow-y: auto; line-height: 1.5;">${esc(corr.correctedText)}</pre>
           </div>
-          <div class="result-detail-box suggestion">
-            <div class="detail-label">${t('suggestion', 'Sugerencia')}</div>
-            <div class="detail-text">${esc(r.suggestion) || '—'}</div>
+        `;
+      }
+
+      return `
+        <div class="result-row">
+          <div class="result-row-header">
+            <span class="status-badge status-${r.status}">${statusIcon[r.status]} ${statusLabel[r.status]}</span>
+            <span class="result-id">${esc(r.item.id)}</span>
+            <span class="result-category">${esc(r.item.category)}</span>
+            <span class="result-requirement">${esc(r.item.requirement)}</span>
+          </div>
+          <div class="result-details">
+            <div class="result-detail-box evidence">
+              <div class="detail-label">${t('evidence', 'Evidencia')}</div>
+              <div class="detail-text">${esc(r.evidence) || '—'}</div>
+            </div>
+            <div class="result-detail-box suggestion">
+              <div class="detail-label">${t('suggestion', 'Sugerencia')}</div>
+              <div class="detail-text">${esc(r.suggestion) || '—'}</div>
+            </div>
+            ${correctionHtml}
           </div>
         </div>
-      </div>
-    `).join('')}
+      `;
+    }).join('')}
   `;
 }
 
 // ── Fix button event ──
-document.getElementById('btn-fix').addEventListener('click', runFixPipeline);
+document.getElementById('btn-fix').addEventListener('click', () => {
+  if (latestCorrectedPdfUrl) {
+    window.open(latestCorrectedPdfUrl, '_blank');
+  } else {
+    runFixPipeline();
+  }
+});
 document.getElementById('btn-close-modal').addEventListener('click', () => {
   document.getElementById('fix-modal').style.display = 'none';
 });
@@ -275,6 +374,9 @@ async function runFixPipeline() {
             dlBtn.href = data.downloadUrl;
             dlBtn.style.display = 'inline-flex';
             toast(t('fix_success', 'Corrección finalizada con éxito'), 'success');
+            if (data.data) {
+              renderResults(data.data);
+            }
           } else if (data.type === 'error') {
             throw new Error(data.error);
           }

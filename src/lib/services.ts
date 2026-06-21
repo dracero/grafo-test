@@ -133,7 +133,7 @@ async function initializeServices(): Promise<Services> {
   const visualizationService = new VisualizationServiceImpl();
   await visualizationService.connect(config.neo4j);
 
-  const comparisonService = new ComparisonService(config.google.apiKey);
+  const comparisonService = new ComparisonService();
 
   logger.info('Services', 'All services initialized successfully');
 
