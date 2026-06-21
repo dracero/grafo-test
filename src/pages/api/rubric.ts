@@ -246,8 +246,15 @@ ${text.substring(0, limit)}`;
 
 // ── POST ────────────────────────────────────────────────────────────────────
 
-export const POST: APIRoute = async ({ request, cookies }) => {
+export const POST: APIRoute = async ({ request, cookies, locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { comparisonService, graphBuilder, config } = await getServices();
     const formData = await request.formData();
 
@@ -302,19 +309,21 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     if (neo4jDriver) {
       const session = neo4jDriver.session();
       try {
-        // Ensure NormativeDocument exists
+        // Ensure NormativeDocument exists and is owned by the user
         await session.run(`
+          MERGE (u:User {email: $userEmail})
           MERGE (d:Entity {name: $name})
           ON CREATE SET d.createdAt = datetime(), d.type = 'DOCUMENT', d.text = $text
           ON MATCH SET d.text = $text
           SET d:Document:NormativeDocument
-        `, { name: normFile.name, text: normPdf.text.substring(0, 500000) });
+          MERGE (u)-[:OWNED_BY]->(d)
+        `, { userEmail, name: normFile.name, text: normPdf.text.substring(0, 500000) });
 
-        // Save OntologyItems
+        // Save OntologyItems linked to user's normative document
         for (const item of ontology) {
           const uniqueName = `${normFile.name}_${item.id}`;
           await session.run(`
-            MATCH (d:Entity {name: $docName})
+            MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d:Entity {name: $docName})
             WHERE d:NormativeDocument
             MERGE (o:Entity {name: $uniqueName})
             ON CREATE SET
@@ -335,6 +344,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             SET o:OntologyItem
             MERGE (o)-[:EXTRACTED_FROM]->(d)
           `, {
+            userEmail,
             docName: normFile.name,
             uniqueName,
             itemId: item.id,
@@ -353,13 +363,13 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     logger.info('Rubric', `Step 3: Extracting evaluation schema using provider: ${provider || 'default'}...`);
     const schemaAspects = await extractSchemaAspects(schemaPdf.text, config, provider);
     logger.info('Rubric', `Schema aspects extracted: ${schemaAspects.length}`);
-    await graphBuilder.saveEvaluationSchema(schemaFile.name, schemaAspects);
+    await graphBuilder.saveEvaluationSchema(schemaFile.name, schemaAspects, userEmail);
 
     // ── Step 4: Run multi-agent pipeline ──
     logger.info('Rubric', `Step 4: Running multi-agent rubric pipeline with provider: ${provider || 'default'}...`);
     let rubricRaw: any = null;
 
-    for await (const update of runRubricPipeline(normFile.name, schemaFile.name, graphBuilder, provider, lang)) {
+    for await (const update of runRubricPipeline(normFile.name, schemaFile.name, graphBuilder, provider, lang, userEmail)) {
       logger.info('Rubric', `[${update.step}] final=${update.isFinal}, content length=${update.content.length}`);
 
       if (update.step === 'RubricSynthesizerAgent' && update.isFinal) {
@@ -405,8 +415,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     const pdfBase64 = pdfBuffer.toString('base64');
 
     // ── Step 6: Persist to Neo4j ──
-    logger.info('Rubric', `Persisting generated rubric to Neo4j with language ${lang}...`);
-    await graphBuilder.saveRubric(rubric, pdfBase64, lang);
+    logger.info('Rubric', `Persisting generated rubric to Neo4j with language ${lang} for user ${userEmail}...`);
+    await graphBuilder.saveRubric(rubric, pdfBase64, lang, userEmail);
 
     return new Response(JSON.stringify({
       success: true,
@@ -430,12 +440,19 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 /**
  * GET /api/rubric — Retrieves the latest persisted rubric from Neo4j.
  */
-export const GET: APIRoute = async ({ cookies }) => {
+export const GET: APIRoute = async ({ cookies, locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { graphBuilder } = await getServices();
     const lang = cookies.get('app_lang')?.value || 'es';
-    logger.info('Rubric', `Fetching latest rubric for language ${lang} from Neo4j...`);
-    const result = await graphBuilder.getLatestRubric(lang);
+    logger.info('Rubric', `Fetching latest rubric for language ${lang} from Neo4j for user ${userEmail}...`);
+    const result = await graphBuilder.getLatestRubric(lang, userEmail);
 
     if (!result) {
       return new Response(JSON.stringify({ success: true, data: null }), {
@@ -464,11 +481,18 @@ export const GET: APIRoute = async ({ cookies }) => {
 /**
  * DELETE /api/rubric — Clears all rubrics from Neo4j.
  */
-export const DELETE: APIRoute = async () => {
+export const DELETE: APIRoute = async ({ locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { graphBuilder } = await getServices();
-    logger.info('Rubric', 'Clearing all rubrics from Neo4j...');
-    await graphBuilder.clearRubrics();
+    logger.info('Rubric', `Clearing rubrics from Neo4j for user ${userEmail}...`);
+    await graphBuilder.clearRubrics(userEmail);
     return new Response(JSON.stringify({ success: true, message: 'Rúbricas eliminadas.' }), {
       headers: { 'Content-Type': 'application/json' },
     });

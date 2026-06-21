@@ -88,37 +88,37 @@ export interface KnowledgeGraphBuilder {
    * @param report - The comparison report to save
    * @throws {Neo4jError} If operation fails
    */
-  saveComparisonReport(report: ComparisonReport): Promise<void>;
+  saveComparisonReport(report: ComparisonReport, userEmail: string): Promise<void>;
 
   /**
    * Clears previous comparison nodes from the graph
    */
-  clearPreviousComparisons(): Promise<void>;
+  clearPreviousComparisons(userEmail: string): Promise<void>;
 
   /**
    * Clears the entire database (all nodes and relationships)
    */
-  clearEntireDatabase(): Promise<void>;
+  clearEntireDatabase(userEmail: string): Promise<void>;
 
   /**
    * Retrieves the latest comparison report from the graph
    */
-  getLatestComparison(): Promise<ComparisonReport | null>;
+  getLatestComparison(userEmail: string): Promise<ComparisonReport | null>;
 
   /**
    * Saves a generated rubric into the knowledge graph
    */
-  saveRubric(rubric: any, pdfBase64: string): Promise<void>;
+  saveRubric(rubric: any, pdfBase64: string, lang: string, userEmail: string): Promise<void>;
 
   /**
    * Retrieves the latest generated rubric from the graph
    */
-  getLatestRubric(): Promise<{ rubric: any; pdfBase64: string } | null>;
+  getLatestRubric(lang: string, userEmail: string): Promise<{ rubric: any; pdfBase64: string } | null>;
 
   /**
    * Clears all rubrics from the graph
    */
-  clearRubrics(): Promise<void>;
+  clearRubrics(userEmail: string): Promise<void>;
 
   /**
    * Closes the connection to Neo4j

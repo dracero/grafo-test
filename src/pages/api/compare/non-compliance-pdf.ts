@@ -9,12 +9,19 @@ import { createLogger } from '../../../services/logger';
 
 const logger = createLogger();
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { graphBuilder } = await getServices();
-    logger.info('API', 'Fetching latest comparison report to generate non-conformity PDF...');
+    logger.info('API', `Fetching latest comparison report to generate non-conformity PDF for user ${userEmail}...`);
     
-    const report = await graphBuilder.getLatestComparison();
+    const report = await graphBuilder.getLatestComparison(userEmail);
 
     if (!report) {
       return new Response(JSON.stringify({ success: false, error: 'No se encontró ningún informe de comparación reciente.' }), {

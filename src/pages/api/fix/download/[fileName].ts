@@ -9,7 +9,14 @@ import { createLogger } from '../../../../services/logger';
 
 const logger = createLogger();
 
-export const GET: APIRoute = async ({ params, cookies }) => {
+export const GET: APIRoute = async ({ params, cookies, locals }) => {
+  const userEmail = locals.user?.email;
+  if (!userEmail) {
+    return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
   const fileName = decodeURIComponent(params.fileName as string);
   let buffer = correctedPdfs.get(fileName);
 
@@ -20,7 +27,7 @@ export const GET: APIRoute = async ({ params, cookies }) => {
       const originalBuffer = getOriginalPdfBuffer(programDocument);
       
       const { graphBuilder } = await getServices();
-      const report = await graphBuilder.getLatestComparison();
+      const report = await graphBuilder.getLatestComparison(userEmail);
       
       if (report && report.programDocument === programDocument && (report as any).correctionsJson) {
         const corrections = JSON.parse((report as any).correctionsJson);

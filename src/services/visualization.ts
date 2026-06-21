@@ -133,40 +133,64 @@ export class VisualizationServiceImpl implements VisualizationService {
   /**
    * Requirements: 6.1, 6.3, 6.4
    */
-  async getGraph(filters?: GraphFilters): Promise<GraphData> {
+  async getGraph(filters?: GraphFilters, userEmail?: string): Promise<GraphData> {
     this.ensureConnected();
 
     return this.executeRead(async (session) => {
-      let nodeMatch = '(n:Entity)';
-      let conditions: string[] = [];
       let params: any = {};
+      let query: string;
+
+      // Build entity filter conditions (not including userEmail scope)
+      const entityConditions: string[] = [];
 
       if (filters?.entityTypes && filters.entityTypes.length > 0) {
-        conditions.push(`n.type IN $entityTypes`);
+        entityConditions.push(`n.type IN $entityTypes`);
         params.entityTypes = filters.entityTypes;
       }
 
       if (filters?.sourceDocuments && filters.sourceDocuments.length > 0) {
-        // any doc in list intersects with n.documents
-        conditions.push(`any(doc IN $sourceDocuments WHERE doc IN n.documents)`);
+        entityConditions.push(`any(doc IN $sourceDocuments WHERE doc IN n.documents)`);
         params.sourceDocuments = filters.sourceDocuments;
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       const limitClause = filters?.maxNodes ? `LIMIT $maxNodes` : '';
       if (filters?.maxNodes) {
         params.maxNodes = filters.maxNodes;
       }
 
-      const query = `
-        MATCH ${nodeMatch}
-        ${whereClause}
-        WITH collect(n) AS nodes
-        OPTIONAL MATCH (n1)-[r]->(n2)
-        WHERE n1 IN nodes AND n2 IN nodes
-        RETURN nodes, collect(r) AS edges
-        ${limitClause}
-      `;
+      if (userEmail) {
+        params.userEmail = userEmail;
+        // userEmail scope: filter via OWNED_BY, then apply other conditions with a separate WHERE
+        const entityWhereClause = entityConditions.length > 0
+          ? `AND ${entityConditions.join(' AND ')}`
+          : '';
+
+        query = `
+          MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d:Document)
+          WITH collect(d.name) AS ownedDocs
+          MATCH (n:Entity)
+          WHERE any(doc IN n.documents WHERE doc IN ownedDocs) ${entityWhereClause}
+          WITH collect(n) AS nodes, ownedDocs
+          OPTIONAL MATCH (n1)-[r]->(n2)
+          WHERE n1 IN nodes AND n2 IN nodes
+          RETURN nodes, collect(r) AS edges
+          ${limitClause}
+        `;
+      } else {
+        const whereClause = entityConditions.length > 0
+          ? `WHERE ${entityConditions.join(' AND ')}`
+          : '';
+
+        query = `
+          MATCH (n:Entity)
+          ${whereClause}
+          WITH collect(n) AS nodes
+          OPTIONAL MATCH (n1)-[r]->(n2)
+          WHERE n1 IN nodes AND n2 IN nodes
+          RETURN nodes, collect(r) AS edges
+          ${limitClause}
+        `;
+      }
 
       try {
         const result = await session.run(query, params);
@@ -206,32 +230,46 @@ export class VisualizationServiceImpl implements VisualizationService {
   /**
    * Requirements: 6.3
    */
-  async getNodesByType(entityType: EntityType): Promise<Entity[]> {
-    const graph = await this.getGraph({ entityTypes: [entityType] });
+  async getNodesByType(entityType: EntityType, userEmail?: string): Promise<Entity[]> {
+    const graph = await this.getGraph({ entityTypes: [entityType] }, userEmail);
     return graph.nodes;
   }
 
   /**
    * Requirements: 6.4
    */
-  async getNodesByDocument(documentName: string): Promise<Entity[]> {
-    const graph = await this.getGraph({ sourceDocuments: [documentName] });
+  async getNodesByDocument(documentName: string, userEmail?: string): Promise<Entity[]> {
+    const graph = await this.getGraph({ sourceDocuments: [documentName] }, userEmail);
     return graph.nodes;
   }
 
   /**
    * Requirements: 6.5
    */
-  async getNodeDetails(nodeId: string): Promise<NodeDetails> {
+  async getNodeDetails(nodeId: string, userEmail?: string): Promise<NodeDetails> {
     this.ensureConnected();
 
     return this.executeRead(async (session) => {
-      // Find node by name or ID
-      const query = `
-        MATCH (n:Entity {id: $nodeId})
-        RETURN n
-      `;
-      const result = await session.run(query, { nodeId });
+      let query = '';
+      let params: any = { nodeId };
+
+      if (userEmail) {
+        query = `
+          MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d:Document)
+          WITH collect(d.name) AS ownedDocs
+          MATCH (n:Entity {id: $nodeId})
+          WHERE any(doc IN n.documents WHERE doc IN ownedDocs)
+          RETURN n
+        `;
+        params.userEmail = userEmail;
+      } else {
+        query = `
+          MATCH (n:Entity {id: $nodeId})
+          RETURN n
+        `;
+      }
+      
+      const result = await session.run(query, params);
       
       if (result.records.length === 0) {
         throw VisualizationError.nodeNotFound(nodeId);

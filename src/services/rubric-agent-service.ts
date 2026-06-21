@@ -42,7 +42,8 @@ export async function* runRubricPipeline(
   schemaName: string,
   graphBuilder: KnowledgeGraphBuilderImpl,
   provider?: string,
-  lang: string = 'es'
+  lang: string = 'es',
+  userEmail: string = ''
 ): AsyncGenerator<RubricAgentStepUpdate, void, unknown> {
   const languageNames: Record<string, string> = {
     es: 'Español (Castellano)',
@@ -70,7 +71,7 @@ export async function* runRubricPipeline(
       const normDoc = context.state.get<string>('app:normative_doc') || normativeName;
       logger.info('OntologyAnalyzerAgent', `Fetching ontology for: ${normDoc}`);
 
-      const ontology = await graphBuilder.getNormativeOntology(normDoc);
+      const ontology = await graphBuilder.getNormativeOntology(normDoc, userEmail);
 
       return `Eres un experto en evaluación y acreditación de programas universitarios.
 
@@ -121,9 +122,9 @@ Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
     instruction: async (context) => {
       logger.info('SchemaOntologyAdjusterAgent', 'Fetching evaluation schema and ontology analysis');
 
-      const evaluationSchema = await graphBuilder.getEvaluationSchema();
+      const evaluationSchema = await graphBuilder.getEvaluationSchema(userEmail);
       const normDoc = context.state.get<string>('app:normative_doc') || normativeName;
-      const ontology = await graphBuilder.getNormativeOntology(normDoc);
+      const ontology = await graphBuilder.getNormativeOntology(normDoc, userEmail);
       const ontologyAnalysis = context.state.get<string>('app:ontology_analysis') || '';
 
       return `Eres un experto en diseño curricular, evaluación educativa y acreditación universitaria.
@@ -204,7 +205,7 @@ Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
     instruction: async (context) => {
       const ontologyAnalysis = context.state.get<string>('app:ontology_analysis') || '';
       const adjustedOntology = context.state.get<string>('app:adjusted_ontology') || '';
-      const evaluationSchema = await graphBuilder.getEvaluationSchema();
+      const evaluationSchema = await graphBuilder.getEvaluationSchema(userEmail);
 
       logger.info('RubricSynthesizerAgent', `Synthesizing rubric. Schema has ${evaluationSchema.length} aspects.`);
 

@@ -14,8 +14,8 @@ export const GET: APIRoute = async ({ redirect, cookies, url }) => {
     return redirect('/login?error=no_code_provided');
   }
 
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const clientId = import.meta.env.GOOGLE_CLIENT_ID;
+  const clientSecret = import.meta.env.GOOGLE_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
     return new Response(JSON.stringify({ success: false, error: 'Google OAuth configuration missing on server.' }), {
@@ -88,7 +88,7 @@ export const GET: APIRoute = async ({ redirect, cookies, url }) => {
     cookies.set('session_token', token, {
       path: '/',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: import.meta.env.MODE === 'production',
       sameSite: 'lax',
       maxAge: 24 * 60 * 60 // 24 hours
     });

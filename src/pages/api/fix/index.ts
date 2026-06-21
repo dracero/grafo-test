@@ -10,8 +10,15 @@ import { createLogger } from '../../../services/logger';
 
 const logger = createLogger();
 
-export const POST: APIRoute = async ({ request, cookies }) => {
+export const POST: APIRoute = async ({ request, cookies, locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { graphBuilder } = await getServices();
     const body = await request.json();
     const { normativeDocument, programDocument, provider } = body;
@@ -24,7 +31,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       });
     }
 
-    logger.info('API', `Starting fix pipeline: ${programDocument} against ${normativeDocument} using provider: ${provider || 'default'} and language: ${lang}`);
+    logger.info('API', `Starting fix pipeline: ${programDocument} against ${normativeDocument} using provider: ${provider || 'default'} and language: ${lang} for user: ${userEmail}`);
 
     const encoder = new TextEncoder();
 
@@ -32,7 +39,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       async start(controller) {
         try {
           // Check if we already have the comparison and corrections in Neo4j
-          const report = await graphBuilder.getLatestComparison();
+          const report = await graphBuilder.getLatestComparison(userEmail);
           if (report && report.programDocument === programDocument && report.normativeDocument === normativeDocument && (report as any).correctionsJson) {
             logger.info('API', `Found stored corrections for "${programDocument}" in Neo4j. Skipping agents pipeline.`);
             
@@ -72,7 +79,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             return;
           }
 
-          const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder, provider, lang);
+          const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder, provider, lang, userEmail);
           let correctedText = '';
           let validatedComplianceText = '';
 
@@ -110,7 +117,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           }
 
           // Update report results based on validated compliance gaps
-          const comparisonReport = await graphBuilder.getLatestComparison();
+          const comparisonReport = await graphBuilder.getLatestComparison(userEmail);
           if (comparisonReport && comparisonReport.programDocument === programDocument && comparisonReport.normativeDocument === normativeDocument) {
             const validatedGapsMap = new Map(validatedGaps.map((g: any) => [g.id, g]));
             const excludedGapsMap = new Map(excludedGaps.map((g: any) => [g.id, g]));
@@ -142,12 +149,12 @@ export const POST: APIRoute = async ({ request, cookies }) => {
             comparisonReport.summary = { total, covered, partial, missing, coveragePercent };
 
             // Save the updated comparison report back to Neo4j
-            await graphBuilder.saveComparisonReport(comparisonReport);
+            await graphBuilder.saveComparisonReport(comparisonReport, userEmail);
             logger.info('API', 'Updated comparison report with validated/excluded gaps saved in Neo4j during fix');
           }
 
           // Save corrections list to the graph
-          await graphBuilder.saveCorrections(programDocument, corrections, correctedText);
+          await graphBuilder.saveCorrections(programDocument, corrections, correctedText, userEmail);
 
           controller.enqueue(encoder.encode(
             JSON.stringify({ type: 'progress', step: 'PDFGenerator', content: `Generando PDF con formato original + ${corrections.length} correcciones...`, isFinal: false }) + '\n'
@@ -162,7 +169,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
           correctedPdfs.set(downloadName, pdfBuffer);
 
-          const finalReport = await graphBuilder.getLatestComparison();
+          const finalReport = await graphBuilder.getLatestComparison(userEmail);
 
           controller.enqueue(encoder.encode(
             JSON.stringify({

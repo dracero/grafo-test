@@ -5,8 +5,15 @@
 import type { APIRoute } from 'astro';
 import { getServices } from '../../../lib/services';
 
-export const GET: APIRoute = async ({ request }) => {
+export const GET: APIRoute = async ({ request, locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { visualizationService } = await getServices();
     const url = new URL(request.url);
     const filters: any = {};
@@ -20,7 +27,7 @@ export const GET: APIRoute = async ({ request }) => {
     const maxNodes = url.searchParams.get('maxNodes');
     if (maxNodes) filters.maxNodes = parseInt(maxNodes, 10);
 
-    const graphData = await visualizationService.getGraph(filters);
+    const graphData = await visualizationService.getGraph(filters, userEmail);
     const vizData = await visualizationService.generateVisualizationData(graphData);
 
     return new Response(JSON.stringify({

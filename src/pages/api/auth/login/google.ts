@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 
 export const GET: APIRoute = async ({ redirect, url }) => {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientId = import.meta.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
     return new Response(JSON.stringify({ success: false, error: 'Google OAuth is not configured on this server.' }), {
       status: 400,

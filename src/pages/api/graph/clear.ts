@@ -8,11 +8,18 @@ import { createLogger } from '../../../services/logger';
 
 const logger = createLogger();
 
-export const POST: APIRoute = async () => {
+export const POST: APIRoute = async ({ locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { graphBuilder } = await getServices();
-    logger.info('API', 'Clearing entire database...');
-    await graphBuilder.clearEntireDatabase();
+    logger.info('API', `Clearing database for user ${userEmail}...`);
+    await graphBuilder.clearEntireDatabase(userEmail);
     return new Response(JSON.stringify({ success: true, message: 'Base de datos borrada por completo.' }), {
       headers: { 'Content-Type': 'application/json' },
     });

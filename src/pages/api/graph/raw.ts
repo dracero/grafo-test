@@ -6,8 +6,15 @@
 import type { APIRoute } from 'astro';
 import { getServices } from '../../../lib/services';
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { visualizationService } = await getServices();
     const neo4jDriver = (visualizationService as any).driver;
 
@@ -22,17 +29,26 @@ export const GET: APIRoute = async () => {
     const session = neo4jDriver.session({ defaultAccessMode: neo4jModule.default.session.READ });
 
     try {
-      // Get nodes that are part of the ontology or comparison
+      // Get nodes that are part of the ontology or comparison for the current user
       const nodesResult = await session.run(`
-        MATCH (n)
-        WHERE n:NormativeDocument OR n:ProgramDocument OR n:OntologyItem
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d:Document)
+        OPTIONAL MATCH (d)-[:EXTRACTED_FROM|COMPARED_TO|EVALUATED_AGAINST]-(x)
+        WITH d, x
+        UNWIND [d, x] AS n
+        WITH DISTINCT n
+        WHERE n IS NOT NULL AND (n:NormativeDocument OR n:ProgramDocument OR n:OntologyItem)
         RETURN n, labels(n) AS labels, elementId(n) AS elementId
-      `);
+      `, { userEmail });
 
-      // Get relationships between those specific nodes
+      // Get relationships between those specific nodes for the current user
       const relsResult = await session.run(`
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d:Document)
+        OPTIONAL MATCH (d)-[:EXTRACTED_FROM|COMPARED_TO|EVALUATED_AGAINST]-(x)
+        WITH collect(DISTINCT d) + collect(DISTINCT x) AS userNodes
+        UNWIND userNodes AS a
         MATCH (a)-[r]->(b)
-        WHERE (a:NormativeDocument OR a:ProgramDocument OR a:OntologyItem)
+        WHERE b IN userNodes
+          AND (a:NormativeDocument OR a:ProgramDocument OR a:OntologyItem)
           AND (b:NormativeDocument OR b:ProgramDocument OR b:OntologyItem)
         RETURN type(r) AS type, 
                properties(r) AS props,
@@ -40,7 +56,7 @@ export const GET: APIRoute = async () => {
                elementId(b) AS targetId,
                a.name AS sourceName,
                b.name AS targetName
-      `);
+      `, { userEmail });
 
       const nodes = nodesResult.records.map((record: any) => {
         const node = record.get('n');

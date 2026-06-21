@@ -11,10 +11,17 @@ import { generateCorrectedProgramPDF, parseCorrections } from '../../../services
 const logger = createLogger();
 import pdfParse from 'pdf-parse';
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { graphBuilder } = await getServices();
-    const report = await graphBuilder.getLatestComparison();
+    const report = await graphBuilder.getLatestComparison(userEmail);
     return new Response(JSON.stringify({ success: true, data: report || null }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -27,8 +34,15 @@ export const GET: APIRoute = async () => {
   }
 };
 
-export const POST: APIRoute = async ({ request, cookies }) => {
+export const POST: APIRoute = async ({ request, cookies, locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { comparisonService, graphBuilder } = await getServices();
     const formData = await request.formData();
 
@@ -92,10 +106,10 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           );
 
           if (clearPrevious) {
-            await graphBuilder.clearPreviousComparisons();
+            await graphBuilder.clearPreviousComparisons(userEmail);
             logger.info('API', 'Cleared previous comparisons from Neo4j');
           }
-          await graphBuilder.saveComparisonReport(report);
+          await graphBuilder.saveComparisonReport(report, userEmail);
           logger.info('API', 'Successfully saved comparison report to Neo4j');
 
           controller.enqueue(encoder.encode(
@@ -103,7 +117,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           ));
 
           // 2. Run multi-agent pipeline
-          const pipeline = runCorrectionPipeline(normFile.name, progFile.name, graphBuilder, provider, lang);
+          const pipeline = runCorrectionPipeline(normFile.name, progFile.name, graphBuilder, provider, lang, userEmail);
           let correctedText = '';
           let validatedComplianceText = '';
 
@@ -175,11 +189,11 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           report.summary = { total, covered, partial, missing, coveragePercent };
 
           // Save the updated comparison report back to Neo4j
-          await graphBuilder.saveComparisonReport(report);
+          await graphBuilder.saveComparisonReport(report, userEmail);
           logger.info('API', 'Updated comparison report with validated/excluded gaps saved in Neo4j');
 
           // Save corrections list to the graph
-          await graphBuilder.saveCorrections(progFile.name, corrections, correctedText);
+          await graphBuilder.saveCorrections(progFile.name, corrections, correctedText, userEmail);
 
           // Generate corrected PDF and cache it
           const pdfBuffer = await generateCorrectedProgramPDF(progFile.name, progBuffer, corrections, correctedText, lang);
@@ -188,7 +202,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           logger.info('API', `Generated corrected PDF and cached as: ${downloadName} (${pdfBuffer.length} bytes)`);
 
           // Fetch the final saved report from Neo4j to return it
-          const finalReport = await graphBuilder.getLatestComparison();
+          const finalReport = await graphBuilder.getLatestComparison(userEmail);
 
           controller.enqueue(encoder.encode(
             JSON.stringify({

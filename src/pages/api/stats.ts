@@ -8,8 +8,15 @@ import { createLogger } from '../../services/logger';
 
 const logger = createLogger();
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ locals }) => {
   try {
+    const userEmail = locals.user?.email;
+    if (!userEmail) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const { visualizationService } = await getServices();
     const neo4jDriver = (visualizationService as any).driver;
 
@@ -24,21 +31,53 @@ export const GET: APIRoute = async () => {
     const session = neo4jDriver.session({ defaultAccessMode: neo4jModule.default.session.READ });
 
     try {
-      const nodeCount = await session.run('MATCH (n) RETURN count(n) AS count');
-      const relCount = await session.run('MATCH ()-[r]->() RETURN count(r) AS count');
-      const typeBreakdown = await session.run(`
+      const nodeCount = await session.run(`
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d)
+        WITH collect(d) AS ownedNodes, u
+        OPTIONAL MATCH (u)-[:OWNED_BY]->(doc:Document)
+        WITH ownedNodes, collect(doc.name) AS ownedDocs
         MATCH (n)
+        WHERE n IN ownedNodes OR (n:Entity AND any(doc IN n.documents WHERE doc IN ownedDocs))
+        RETURN count(n) AS count
+      `, { userEmail });
+
+      const relCount = await session.run(`
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d)
+        WITH collect(d) AS ownedNodes, u
+        OPTIONAL MATCH (u)-[:OWNED_BY]->(doc:Document)
+        WITH ownedNodes, collect(doc.name) AS ownedDocs
+        MATCH (n)
+        WHERE n IN ownedNodes OR (n:Entity AND any(doc IN n.documents WHERE doc IN ownedDocs))
+        WITH collect(n) AS userNodes
+        UNWIND userNodes AS a
+        MATCH (a)-[r]->(b)
+        WHERE b IN userNodes
+        RETURN count(r) AS count
+      `, { userEmail });
+
+      const typeBreakdown = await session.run(`
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d)
+        WITH collect(d) AS ownedNodes, u
+        OPTIONAL MATCH (u)-[:OWNED_BY]->(doc:Document)
+        WITH ownedNodes, collect(doc.name) AS ownedDocs
+        MATCH (n)
+        WHERE n IN ownedNodes OR (n:Entity AND any(doc IN n.documents WHERE doc IN ownedDocs))
         WITH labels(n) AS lbls, COALESCE(n.type, labels(n)[0]) AS type
         RETURN type, count(*) AS count
         ORDER BY count DESC
-      `);
+      `, { userEmail });
+
       const docBreakdown = await session.run(`
-        MATCH (n)
-        WHERE n.documents IS NOT NULL
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(doc:Document)
+        WITH collect(doc.name) AS ownedDocs
+        MATCH (n:Entity)
+        WHERE any(doc IN n.documents WHERE doc IN ownedDocs)
         UNWIND n.documents AS doc
+        WITH doc, ownedDocs
+        WHERE doc IN ownedDocs
         RETURN doc AS document, count(*) AS entityCount
         ORDER BY entityCount DESC
-      `);
+      `, { userEmail });
 
       return new Response(JSON.stringify({
         success: true,

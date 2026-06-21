@@ -16,9 +16,10 @@ export async function* runCorrectionPipeline(
   programName: string,
   graphBuilder: KnowledgeGraphBuilderImpl,
   provider?: string,
-  lang: string = 'es'
+  lang: string = 'es',
+  userEmail: string = ''
 ): AsyncGenerator<AgentStepUpdate, void, unknown> {
-  logger.info('MultiAgentService', `Starting correction pipeline: ${programName} using ${normativeName} with provider: ${provider || 'default'} and language: ${lang}`);
+  logger.info('MultiAgentService', `Starting correction pipeline: ${programName} using ${normativeName} with provider: ${provider || 'default'} and language: ${lang} for user: ${userEmail}`);
 
   const targetLangName = lang === 'gl' ? 'Gallego' : lang === 'pt' ? 'Portugués' : lang === 'en' ? 'Inglés' : 'Español';
 
@@ -33,9 +34,10 @@ export async function* runCorrectionPipeline(
     outputKey: 'app:normative_analysis',
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
-      logger.info('NormativeOntologyAgent', `Fetching ontology for normative doc: ${normDoc}`);
+      const email = context.state.get<string>('app:user_email') || '';
+      logger.info('NormativeOntologyAgent', `Fetching ontology for normative doc: ${normDoc} for user: ${email}`);
       
-      const ontology = await graphBuilder.getNormativeOntology(normDoc || '');
+      const ontology = await graphBuilder.getNormativeOntology(normDoc || '', email);
       return `Eres el agente especialista en ontología normativa. Tu objetivo es leer y estructurar de forma clara los requisitos y estándares normativos provistos desde la base de datos de Neo4j para el documento normativo "${normDoc}".
       
       Aquí está la ontología normativa extraída:
@@ -52,9 +54,10 @@ export async function* runCorrectionPipeline(
     outputKey: 'app:program_analysis',
     instruction: async (context) => {
       const progDoc = context.state.get<string>('app:program_doc');
-      logger.info('ProgramOntologyAgent', `Fetching ontology for program doc: ${progDoc}`);
+      const email = context.state.get<string>('app:user_email') || '';
+      logger.info('ProgramOntologyAgent', `Fetching ontology for program doc: ${progDoc} for user: ${email}`);
       
-      const ontology = await graphBuilder.getProgramOntology(progDoc || '');
+      const ontology = await graphBuilder.getProgramOntology(progDoc || '', email);
       return `Eres el agente especialista en programas de materias. Tu objetivo es leer y estructurar el contenido actual del programa de materia "${progDoc}" utilizando la información de conceptos y temas cargados en el grafo de Neo4j.
       
       Aquí están los conceptos y contenidos extraídos de la materia:
@@ -71,9 +74,10 @@ export async function* runCorrectionPipeline(
     outputKey: 'app:original_structure',
     instruction: async (context) => {
       const progDoc = context.state.get<string>('app:program_doc');
-      logger.info('StructureAnalyzerAgent', `Analyzing original structure for: ${progDoc}`);
+      const email = context.state.get<string>('app:user_email') || '';
+      logger.info('StructureAnalyzerAgent', `Analyzing original structure for: ${progDoc} for user: ${email}`);
       
-      const originalText = await graphBuilder.getProgramText(progDoc || '');
+      const originalText = await graphBuilder.getProgramText(progDoc || '', email);
       return `Eres el agente especialista en análisis de estructura de documentos. Tu objetivo es leer el texto del programa de materia "${progDoc}" y extraer su estructura (secciones, subsecciones, tablas, y estilo de viñetas).
       
       Texto del programa:
@@ -91,9 +95,10 @@ export async function* runCorrectionPipeline(
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
       const progDoc = context.state.get<string>('app:program_doc');
-      logger.info('ComplianceGapsAgent', `Fetching compliance gaps between ${progDoc} and ${normDoc}`);
+      const email = context.state.get<string>('app:user_email') || '';
+      logger.info('ComplianceGapsAgent', `Fetching compliance gaps between ${progDoc} and ${normDoc} for user: ${email}`);
       
-      const gaps = await graphBuilder.getComplianceGaps(normDoc || '', progDoc || '');
+      const gaps = await graphBuilder.getComplianceGaps(normDoc || '', progDoc || '', email);
       return `Eres el agente especialista en análisis de cumplimiento de planes de estudio universitarios. Tu objetivo es consolidar y detallar las brechas de cumplimiento detectadas (requisitos faltantes o parcialmente cubiertos) en el plan de estudios de la carrera "${progDoc}" con respecto a la norma "${normDoc}".
       
       Aquí están los resultados de cumplimiento parciales o faltantes extraídos de Neo4j:
@@ -123,9 +128,10 @@ export async function* runCorrectionPipeline(
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
       const progDoc = context.state.get<string>('app:program_doc');
-      logger.info('ComplianceValidatorAgent', `Validating compliance gaps between ${progDoc} and ${normDoc}`);
+      const email = context.state.get<string>('app:user_email') || '';
+      logger.info('ComplianceValidatorAgent', `Validating compliance gaps between ${progDoc} and ${normDoc} for user: ${email}`);
 
-      const originalText = await graphBuilder.getProgramText(progDoc || '');
+      const originalText = await graphBuilder.getProgramText(progDoc || '', email);
       const complianceAnalysis = context.state.get<string>('app:compliance_analysis') || '';
 
       return `Eres el Agente Validador de Cumplimiento Semántico. Tu rol es analizar críticamente las brechas de cumplimiento detectadas y el texto original del programa para filtrar falsos positivos o recomendaciones redundantes e innecesarias.
@@ -142,7 +148,7 @@ DIRECTIVAS DE EVALUACIÓN SEMÁNTICA Y HOLÍSTICA:
 2. Identifica "Declaraciones Negativas Válidas": Si una brecha reclama que falta regular o detallar un aspecto (por ejemplo, procedimientos de dispensa académica, exenciones de asistencia, requerimiento de software pago, laboratorios específicos, etc.) y en el programa el docente indica explícitamente que NO aplica, que NO se concede, o que NINGUNA actividad está sujeta a ello (ej: "no se concede dispensa académica en ningún caso", "todas las actividades son obligatorias", "no hay software requerido"), esto constituye una regulación completa y válida para la materia. Debes declarar esta brecha como un FALSO POSITIVO y removerla/descartarla para que no se intente generar una corrección innecesaria.
 3. Identifica "No Aplicabilidad por Naturaleza": Si un requisito normativo de infraestructura o equipamiento no aplica al tipo de asignatura (por ejemplo, laboratorios físicos para una materia puramente teórica), clasifica la brecha como FALSO POSITIVO y remuévela.
 4. Conserva únicamente las BRECHAS REALES donde efectivamente falte información que la norma exige obligatoriamente y que no haya sido abordada en absoluto en el programa.
-5. SÉ PRUDENTE AL DESCARTAR: No elimines brechas si no hay una justificación explícita en el programa original. Si tienes dudas sobre si el programa cubre el requisito, mantén la brecha como real para asegurar cobertura completa.
+5. SÉ PRUDENTE AL DESCARTAR: No elimines brechas si no hay una justificación explícita en el programa original. Si tienes dudas sobre si el programa covers el requisito, mantén la brecha como real para asegurar cobertura completa.
 
 Devuelve un JSON que contenga la lista final depurada de brechas reales de cumplimiento. Todos los campos de texto descriptivos (ej: description, evidence, suggestion, reason) deben estar escritos obligatoriamente en idioma ${targetLangName}. No incluyas markdown, solo el JSON puro con esta estructura:
 {
@@ -175,9 +181,10 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
     outputKey: 'app:corrected_program',
     instruction: async (context) => {
       const progDoc = context.state.get<string>('app:program_doc');
-      logger.info('ProgramFixerAgent', `Fetching original text for program doc: ${progDoc}`);
+      const email = context.state.get<string>('app:user_email') || '';
+      logger.info('ProgramFixerAgent', `Fetching original text for program doc: ${progDoc} for user: ${email}`);
       
-      const originalText = await graphBuilder.getProgramText(progDoc || '');
+      const originalText = await graphBuilder.getProgramText(progDoc || '', email);
       
       // Retrieve intermediate analyses from state
       const normativeAnalysis = context.state.get<string>('app:normative_analysis') || '';
@@ -280,7 +287,8 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
     newMessage: { role: 'user', parts: [{ text: 'Inicia la corrección del programa de materia' }] },
     stateDelta: {
       'app:normative_doc': normativeName,
-      'app:program_doc': programName
+      'app:program_doc': programName,
+      'app:user_email': userEmail
     }
   });
 

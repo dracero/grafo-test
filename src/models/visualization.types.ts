@@ -148,28 +148,28 @@ export interface VisualizationService {
    * @param filters - Filtros opcionales para la consulta
    * @returns Datos del grafo
    */
-  getGraph(filters?: GraphFilters): Promise<GraphData>;
+  getGraph(filters?: GraphFilters, userEmail?: string): Promise<GraphData>;
 
   /**
    * Obtiene nodos filtrados por tipo de entidad
    * @param entityType - Tipo de entidad a filtrar
    * @returns Lista de entidades del tipo especificado
    */
-  getNodesByType(entityType: EntityType): Promise<Entity[]>;
+  getNodesByType(entityType: EntityType, userEmail?: string): Promise<Entity[]>;
 
   /**
    * Obtiene nodos filtrados por documento fuente
    * @param documentName - Nombre del documento fuente
    * @returns Lista de entidades del documento especificado
    */
-  getNodesByDocument(documentName: string): Promise<Entity[]>;
+  getNodesByDocument(documentName: string, userEmail?: string): Promise<Entity[]>;
 
   /**
    * Obtiene detalles completos de un nodo
    * @param nodeId - ID del nodo
    * @returns Detalles completos del nodo
    */
-  getNodeDetails(nodeId: string): Promise<NodeDetails>;
+  getNodeDetails(nodeId: string, userEmail?: string): Promise<NodeDetails>;
 
   /**
    * Genera datos de visualización en formato compatible con bibliotecas de grafos
