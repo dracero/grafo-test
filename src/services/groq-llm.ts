@@ -1,6 +1,7 @@
 import { BaseLlm, LlmRequest, LlmResponse } from '@google/adk';
 import { createLogger } from './logger';
-import { tracer, SpanKind, SpanStatusCode, activeAgentSpans, context, trace } from '../utils/tracing';
+import { tracer, SpanKind, SpanStatusCode, activeAgentSpans, activePipelineSpan, context, trace } from '../utils/tracing';
+import { apiKeyManager } from '../utils/api-key-manager';
 
 const logger = createLogger();
 
@@ -11,10 +12,17 @@ export class GroqLlm extends BaseLlm {
   constructor({ model, apiKey }: { model?: string; apiKey?: string } = {}) {
     const selectedModel = model || 'llama-3.3-70b-versatile';
     super({ model: selectedModel });
-    this.apiKey = apiKey || process.env.GROQ_API_KEY || '';
     this.defaultModel = selectedModel;
 
-    if (!this.apiKey) {
+    // Enable dynamic rotation if using the default environment key
+    const defaultEnvKey = typeof process !== 'undefined' && process.env ? process.env.GROQ_API_KEY : '';
+    if (apiKey === defaultEnvKey) {
+      this.apiKey = '';
+    } else {
+      this.apiKey = apiKey || '';
+    }
+
+    if (!this.apiKey && !apiKeyManager.getCurrentGroqKey()) {
       logger.error('GroqLlm', 'GROQ_API_KEY is not defined in the environment or constructor.', new Error('Missing Groq API Key'));
     }
   }
@@ -28,19 +36,57 @@ export class GroqLlm extends BaseLlm {
     logger.info('GroqLlm', `Sending request to Groq model: ${modelName}`);
 
     const agentName = llmRequest.config?.labels?.adk_agent_name;
-    const parentSpan = agentName ? activeAgentSpans.get(agentName) : undefined;
+    let parentSpan = agentName ? activeAgentSpans.get(agentName) : undefined;
+    if (!parentSpan && activeAgentSpans.size > 0) {
+      parentSpan = Array.from(activeAgentSpans.values())[0];
+    }
+    if (!parentSpan) {
+      parentSpan = activePipelineSpan;
+    }
     let parentCtx = context.active();
     if (parentSpan) {
       parentCtx = trace.setSpan(parentCtx, parentSpan);
     }
 
+    let plainTextInputs = '';
+    if (llmRequest.config?.systemInstruction) {
+      let systemText = '';
+      if (typeof llmRequest.config.systemInstruction === 'string') {
+        systemText = llmRequest.config.systemInstruction;
+      } else if (typeof llmRequest.config.systemInstruction === 'object') {
+        const parts = (llmRequest.config.systemInstruction as any).parts;
+        if (Array.isArray(parts)) {
+          systemText = parts.map((p: any) => p.text || '').join('\n');
+        }
+      }
+      if (systemText) {
+        plainTextInputs += `System: ${systemText}\n\n`;
+      }
+    }
+    if (llmRequest.contents) {
+      for (const content of llmRequest.contents) {
+        const role = content.role === 'model' || content.role === 'assistant' ? 'Assistant' : 'User';
+        let text = '';
+        if (content.parts) {
+          text = content.parts.map((p: any) => p.text || '').join('\n');
+        }
+        if (text.trim()) {
+          plainTextInputs += `${role}: ${text}\n\n`;
+        }
+      }
+    }
+    plainTextInputs = plainTextInputs.trim();
+
     const span = tracer.startSpan(`GroqLlm: ${modelName}`, {
       kind: SpanKind.CLIENT,
       attributes: {
         'langsmith.span.kind': 'LLM',
+        'openinference.span.kind': 'LLM',
         'gen_ai.system': 'groq',
         'gen_ai.request.model': modelName,
-        'inputs': JSON.stringify({ contents: llmRequest.contents, config: llmRequest.config })
+        'inputs': plainTextInputs,
+        'input.value': plainTextInputs,
+        'gen_ai.content.prompt': plainTextInputs
       }
     }, parentCtx);
 
@@ -85,11 +131,12 @@ export class GroqLlm extends BaseLlm {
       let delay = 2500; // Start with 2.5s delay
 
       while (attempt < maxRetries) {
+        const currentKey = this.apiKey || apiKeyManager.getCurrentGroqKey();
         try {
           const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${this.apiKey}`,
+              'Authorization': `Bearer ${currentKey}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -101,20 +148,29 @@ export class GroqLlm extends BaseLlm {
             signal: abortSignal
           });
 
-          if (response.status === 429) {
+          if (response.status === 429 || response.status === 413) {
             attempt++;
             if (attempt >= maxRetries) {
-              const errMsg = 'Groq API rate limit exceeded after maximum retry attempts.';
+              const errMsg = `Groq API rate/token limit exceeded (${response.status}) after maximum retry attempts.`;
               span.setStatus({ code: SpanStatusCode.ERROR, message: errMsg });
               yield {
-                errorCode: '429',
+                errorCode: String(response.status),
                 errorMessage: errMsg
               };
               return;
             }
-            logger.warn('GroqLlm', `Rate limit (429) received from Groq. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            delay *= 2; // exponential backoff
+
+            if (!this.apiKey) {
+              apiKeyManager.rotateGroqKey(currentKey);
+            }
+
+            const sleepDelay = (!this.apiKey && apiKeyManager.getGroqKeyCount() > 1) ? 1000 : delay;
+            logger.warn('GroqLlm', `Rate or token limit (${response.status}) received from Groq. Retrying in ${sleepDelay}ms... (Attempt ${attempt}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, sleepDelay));
+            
+            if (this.apiKey || apiKeyManager.getGroqKeyCount() <= 1) {
+              delay *= 2; // exponential backoff only if single key
+            }
             continue;
           }
 
@@ -147,7 +203,9 @@ export class GroqLlm extends BaseLlm {
             role: 'model',
             parts: [{ text: content }]
           };
-          span.setAttribute('outputs', JSON.stringify(outputObj));
+          span.setAttribute('outputs', content);
+          span.setAttribute('output.value', content);
+          span.setAttribute('gen_ai.content.completion', content);
           span.setStatus({ code: SpanStatusCode.OK });
 
           yield {
@@ -167,9 +225,18 @@ export class GroqLlm extends BaseLlm {
             };
             return;
           }
-          logger.warn('GroqLlm', `Fetch error from Groq. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries}): ${err.message}`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          delay *= 2;
+
+          // Rotate key on connection error
+          if (!this.apiKey) {
+            apiKeyManager.rotateGroqKey(currentKey);
+          }
+
+          const sleepDelay = (!this.apiKey && apiKeyManager.getGroqKeyCount() > 1) ? 1000 : delay;
+          logger.warn('GroqLlm', `Fetch error from Groq. Retrying in ${sleepDelay}ms... (Attempt ${attempt}/${maxRetries}): ${err.message}`);
+          await new Promise(resolve => setTimeout(resolve, sleepDelay));
+          if (this.apiKey || apiKeyManager.getGroqKeyCount() <= 1) {
+            delay *= 2;
+          }
         }
       }
     } finally {

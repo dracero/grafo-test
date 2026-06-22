@@ -7,6 +7,7 @@ import { getServices, getOriginalPdfBuffer, correctedPdfs } from '../../../lib/s
 import { runCorrectionPipeline } from '../../../services/multi-agent-service';
 import { generateCorrectedProgramPDF, parseCorrections } from '../../../services/pdf-generator';
 import { createLogger } from '../../../services/logger';
+import { normalizeStatus } from '../../../services/comparison';
 
 const logger = createLogger();
 
@@ -62,6 +63,17 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
             }
 
             const corrections = JSON.parse((report as any).correctionsJson);
+            // Enrich corrections with evidence/suggestion from comparison results
+            const resultsMap = new Map(report.results.map(r => [r.item.id.toLowerCase(), r]));
+            for (const corr of corrections) {
+              if (corr.gapId) {
+                const match = resultsMap.get(corr.gapId.toLowerCase());
+                if (match) {
+                  corr.evidence = match.evidence || '';
+                  corr.suggestion = match.suggestion || '';
+                }
+              }
+            }
             const originalBuffer = getOriginalPdfBuffer(programDocument);
             const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, (report as any).correctedText || '', lang);
             const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
@@ -131,7 +143,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
                 result.suggestion = 'Ninguna';
               } else if (validatedGapsMap.has(reqId)) {
                 const val = validatedGapsMap.get(reqId);
-                result.status = val.status as 'partial' | 'missing';
+                result.status = normalizeStatus(val.status);
                 result.evidence = val.evidence || result.evidence;
                 result.suggestion = val.suggestion || result.suggestion;
               }
@@ -155,6 +167,21 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
 
           // Save corrections list to the graph
           await graphBuilder.saveCorrections(programDocument, corrections, correctedText, userEmail);
+
+          // Enrich corrections with evidence/suggestion from comparison results
+          const compReportForEnrich = await graphBuilder.getLatestComparison(userEmail);
+          if (compReportForEnrich) {
+            const resultsMap = new Map(compReportForEnrich.results.map(r => [r.item.id.toLowerCase(), r]));
+            for (const corr of corrections) {
+              if (corr.gapId) {
+                const match = resultsMap.get(corr.gapId.toLowerCase());
+                if (match) {
+                  corr.evidence = match.evidence || '';
+                  corr.suggestion = match.suggestion || '';
+                }
+              }
+            }
+          }
 
           controller.enqueue(encoder.encode(
             JSON.stringify({ type: 'progress', step: 'PDFGenerator', content: `Generando PDF con formato original + ${corrections.length} correcciones...`, isFinal: false }) + '\n'

@@ -34,10 +34,11 @@ export async function* runCorrectionPipeline(
     outputKey: 'app:normative_analysis',
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
+      const progDoc = context.state.get<string>('app:program_doc');
       const email = context.state.get<string>('app:user_email') || '';
-      logger.info('NormativeOntologyAgent', `Fetching ontology for normative doc: ${normDoc} for user: ${email}`);
+      logger.info('NormativeOntologyAgent', `Fetching normative ontology (via program doc entities: ${progDoc}) for user: ${email}`);
       
-      const ontology = await graphBuilder.getNormativeOntology(normDoc || '', email);
+      const ontology = await graphBuilder.getProgramOntology(progDoc || '', email);
       return `Eres el agente especialista en ontología normativa. Tu objetivo es leer y estructurar de forma clara los requisitos y estándares normativos provistos desde la base de datos de Neo4j para el documento normativo "${normDoc}".
       
       Aquí está la ontología normativa extraída:
@@ -53,11 +54,12 @@ export async function* runCorrectionPipeline(
     model,
     outputKey: 'app:program_analysis',
     instruction: async (context) => {
+      const normDoc = context.state.get<string>('app:normative_doc');
       const progDoc = context.state.get<string>('app:program_doc');
       const email = context.state.get<string>('app:user_email') || '';
-      logger.info('ProgramOntologyAgent', `Fetching ontology for program doc: ${progDoc} for user: ${email}`);
+      logger.info('ProgramOntologyAgent', `Fetching program ontology (via normative doc OntologyItems: ${normDoc}) for user: ${email}`);
       
-      const ontology = await graphBuilder.getProgramOntology(progDoc || '', email);
+      const ontology = await graphBuilder.getNormativeOntology(normDoc || '', email);
       return `Eres el agente especialista en programas de materias. Tu objetivo es leer y estructurar el contenido actual del programa de materia "${progDoc}" utilizando la información de conceptos y temas cargados en el grafo de Neo4j.
       
       Aquí están los conceptos y contenidos extraídos de la materia:

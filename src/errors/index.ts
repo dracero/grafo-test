@@ -85,15 +85,21 @@ export function isRecoverableError(error: any): boolean {
     return true;
   }
 
-  // Rate limit / resource exhausted
+  // Rate limit / resource exhausted / Payload too large (Groq TPM limit)
   if (
     error?.status === 'RESOURCE_EXHAUSTED' || 
     error?.code === 429 || 
+    error?.code === 413 || 
+    error?.status === 429 ||
+    error?.status === 413 ||
     errMsg.includes('429') || 
+    errMsg.includes('413') || 
     errMsg.includes('resource_exhausted') || 
     errMsg.includes('resource exhausted') || 
     errMsg.includes('quota') || 
-    errMsg.includes('rate limit')
+    errMsg.includes('rate limit') ||
+    errMsg.includes('payload too large') ||
+    errMsg.includes('too large')
   ) {
     return true;
   }

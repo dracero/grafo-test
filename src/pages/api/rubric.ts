@@ -28,6 +28,7 @@ import { googleAI } from '@genkit-ai/google-genai';
 import { Agent, setGlobalDispatcher } from 'undici';
 import { retryWithBackoff } from '../../utils/retry';
 import { apiKeyManager } from '../../utils/api-key-manager';
+import { googleRateLimiter } from '../../utils/rate-limiter';
 
 // Configure global dispatcher for long requests
 setGlobalDispatcher(new Agent({
@@ -164,9 +165,9 @@ ${text.substring(0, limit)}`;
   const response = await retryWithBackoff(
     async () => {
       if (isGroq) {
-        const apiKey = process.env.GROQ_API_KEY || '';
+        const apiKey = apiKeyManager.getCurrentGroqKey();
         if (!apiKey) {
-          throw new Error('GROQ_API_KEY is not defined in the environment.');
+          throw new Error('GROQ_API_KEY is not defined in the environment or ApiKeyManager.');
         }
         logger.info('RubricAPI', 'Calling Groq API via fetch for extractSchemaAspects...');
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -186,8 +187,8 @@ ${text.substring(0, limit)}`;
         });
         
         if (res.status === 413 || res.status === 429) {
-          logger.warn('RubricAPI', `Groq rate/context limit hit (status ${res.status}). Waiting 30 seconds before retrying...`);
-          await new Promise(resolve => setTimeout(resolve, 30000));
+          logger.warn('RubricAPI', `Groq rate/context limit hit (status ${res.status}). Rotating key...`);
+          apiKeyManager.rotateGroqKey(apiKey);
           throw new Error(`Groq rate limit (${res.status}) hit in rubric extraction, retrying.`);
         }
         
@@ -201,6 +202,7 @@ ${text.substring(0, limit)}`;
       } else {
         const currentKey = apiKeyManager.getCurrentKey() || config.google.apiKey;
         try {
+          await googleRateLimiter.throttle();
           const ai = genkit({ plugins: [googleAI({ apiKey: currentKey })] });
           return await ai.generate({
             model: 'googleai/gemini-2.5-flash',

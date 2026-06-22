@@ -23,6 +23,7 @@ import { GenkitAPIError } from '../errors/genkit.errors';
 import { retryWithBackoff } from '../utils/retry';
 import { createLogger } from './logger';
 import { apiKeyManager } from '../utils/api-key-manager';
+import { googleRateLimiter } from '../utils/rate-limiter';
 import { tracer, SpanKind, SpanStatusCode } from '../utils/tracing';
 
 // ─── Neo4j Agent Skills: Index and Retriever references ──────────────────────
@@ -162,6 +163,7 @@ export class GenkitEngineImpl implements GenkitEngine {
       try {
         this.logger.debug('GenkitEngine', `Analyzing text of length ${text.length}`);
 
+        await googleRateLimiter.throttle();
         const ai = this.getOrCreateAi();
         const response = await ai.generate({
           model: 'googleai/gemini-2.5-flash',

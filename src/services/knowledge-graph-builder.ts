@@ -107,9 +107,32 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
                         ) : undefined;
                         createLogger().info('Neo4jQuery', `✔ ${cleanedQuery.substring(0, 120)} | ${duration}ms | ${recordsCount} records`, sanitizedParams ? { params: sanitizedParams } : undefined);
                         
+                        const simplifiedRecords = result.records ? result.records.map((record: any) => {
+                          const obj: Record<string, any> = {};
+                          record.keys.forEach((key: string) => {
+                            const val = record.get(key);
+                            if (typeof val === 'string' && val.length > 200) {
+                              obj[key] = val.substring(0, 200) + '...';
+                            } else if (val && typeof val === 'object' && val.properties) {
+                              obj[key] = {
+                                labels: val.labels,
+                                properties: Object.fromEntries(
+                                  Object.entries(val.properties).map(([k, v]) => [
+                                    k,
+                                    typeof v === 'string' && v.length > 100 ? v.substring(0, 100) + '...' : v
+                                  ])
+                                )
+                              };
+                            } else {
+                              obj[key] = val;
+                            }
+                          });
+                          return obj;
+                        }) : [];
+
                         span.setAttribute('outputs', JSON.stringify({
                           recordsCount,
-                          summary: `Success. Returned ${recordsCount} records.`
+                          records: simplifiedRecords
                         }));
                         span.setStatus({ code: SpanStatusCode.OK });
                         return result;
@@ -416,6 +439,19 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
     this.logger.info('KnowledgeGraph', `Saving comparison report for ${report.programDocument} against ${report.normativeDocument} for user ${userEmail}`);
 
     return this.executeWrite(async (session) => {
+      // Clean up previous EVALUATED_AGAINST relationships and program-specific OntologyItem nodes for this comparison to prevent accumulation
+      await session.run(`
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(p:ProgramDocument {name: $programName})
+        OPTIONAL MATCH (p)-[r:EVALUATED_AGAINST]->(o:OntologyItem)
+        DELETE r
+      `, { userEmail, programName: report.programDocument });
+
+      await session.run(`
+        MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(n:NormativeDocument {name: $normativeName})
+        OPTIONAL MATCH (o:OntologyItem)-[r:EXTRACTED_FROM]->(n)
+        DETACH DELETE o
+      `, { userEmail, normativeName: report.normativeDocument });
+
       await session.run(`
         MERGE (u:User {email: $userEmail})
         MERGE (d:Entity {name: $name})

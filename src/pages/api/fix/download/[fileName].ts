@@ -31,6 +31,17 @@ export const GET: APIRoute = async ({ params, cookies, locals }) => {
       
       if (report && report.programDocument === programDocument && (report as any).correctionsJson) {
         const corrections = JSON.parse((report as any).correctionsJson);
+        // Enrich corrections with evidence/suggestion from comparison results
+        const resultsMap = new Map(report.results.map(r => [r.item.id.toLowerCase(), r]));
+        for (const corr of corrections) {
+          if (corr.gapId) {
+            const match = resultsMap.get(corr.gapId.toLowerCase());
+            if (match) {
+              corr.evidence = match.evidence || '';
+              corr.suggestion = match.suggestion || '';
+            }
+          }
+        }
         const correctedText = (report as any).correctedText || '';
         const lang = cookies.get('app_lang')?.value || 'es';
         

@@ -7,6 +7,7 @@ import { getServices, originalPdfBuffers, savePdfBufferToDisk, correctedPdfs } f
 import { createLogger } from '../../../services/logger';
 import { runCorrectionPipeline } from '../../../services/multi-agent-service';
 import { generateCorrectedProgramPDF, parseCorrections } from '../../../services/pdf-generator';
+import { normalizeStatus } from '../../../services/comparison';
 
 const logger = createLogger();
 import pdfParse from 'pdf-parse';
@@ -171,7 +172,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
               result.suggestion = 'Ninguna';
             } else if (validatedGapsMap.has(reqId)) {
               const val = validatedGapsMap.get(reqId);
-              result.status = val.status as 'partial' | 'missing';
+              result.status = normalizeStatus(val.status);
               result.evidence = val.evidence || result.evidence;
               result.suggestion = val.suggestion || result.suggestion;
             }
@@ -194,6 +195,19 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
 
           // Save corrections list to the graph
           await graphBuilder.saveCorrections(progFile.name, corrections, correctedText, userEmail);
+
+          // Enrich corrections with evidence/suggestion from comparison results
+          // so the PDF annex shows the same information as the HTML view
+          const resultsMap = new Map(report.results.map(r => [r.item.id.toLowerCase(), r]));
+          for (const corr of corrections) {
+            if (corr.gapId) {
+              const match = resultsMap.get(corr.gapId.toLowerCase());
+              if (match) {
+                corr.evidence = match.evidence || '';
+                corr.suggestion = match.suggestion || '';
+              }
+            }
+          }
 
           // Generate corrected PDF and cache it
           const pdfBuffer = await generateCorrectedProgramPDF(progFile.name, progBuffer, corrections, correctedText, lang);

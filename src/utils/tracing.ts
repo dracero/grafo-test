@@ -1,6 +1,50 @@
 import { trace, SpanStatusCode, SpanKind, Span, Context, context } from '@opentelemetry/api';
 
-export const tracer = trace.getTracer('pdf-knowledge-graph');
+const realTracer = trace.getTracer('pdf-knowledge-graph');
+
+// Global tracking variables for ADK agent trajectory hierarchy
+export let activePipelineSpan: Span | undefined = undefined;
+export const activeAgentSpans = new Map<string, Span>();
+
+// Define a safe noopSpan that satisfies the Span interface to prevent OTel spans
+// from being created/registered outside the CorrectionPipeline
+const noopSpan: Span = {
+  setAttribute() { return this; },
+  setAttributes() { return this; },
+  setStatus() { return this; },
+  recordException() { return this; },
+  end() {},
+  spanContext() {
+    return {
+      traceId: '00000000000000000000000000000000',
+      spanId: '0000000000000000',
+      traceFlags: 0,
+    };
+  },
+  isRecording() { return false; },
+  updateName() { return this; }
+} as unknown as Span;
+
+export const tracer = {
+  startSpan(name: string, options?: any, context?: any): Span {
+    if (name === 'CorrectionPipeline' || (activePipelineSpan !== undefined && activePipelineSpan !== noopSpan)) {
+      return realTracer.startSpan(name, options, context);
+    }
+    return noopSpan;
+  },
+  startActiveSpan(name: string, ...args: any[]): any {
+    const callback = args[args.length - 1];
+    
+    if ((name === 'CorrectionPipeline' || (activePipelineSpan !== undefined && activePipelineSpan !== noopSpan)) && typeof callback === 'function') {
+      return (realTracer.startActiveSpan as any)(name, ...args);
+    }
+    
+    if (typeof callback === 'function') {
+      return callback(noopSpan);
+    }
+    return undefined;
+  }
+} as any;
 
 export { SpanStatusCode, SpanKind, context, trace };
 export type { Span, Context };
@@ -28,7 +72,7 @@ export async function withActiveSpan<T>(
   
   const parentContext = options.parentCtx ?? context.active();
   
-  return tracer.startActiveSpan(name, spanOptions, parentContext, async (span) => {
+  return tracer.startActiveSpan(name, spanOptions, parentContext, async (span: Span) => {
     try {
       if (options.spanKind) {
         span.setAttribute('langsmith.span.kind', options.spanKind);
@@ -38,6 +82,8 @@ export async function withActiveSpan<T>(
           ? options.inputs 
           : JSON.stringify(options.inputs);
         span.setAttribute('inputs', inputVal);
+        span.setAttribute('input.value', inputVal);
+        span.setAttribute('gen_ai.content.prompt', inputVal);
       }
       if (options.attributes) {
         for (const [k, v] of Object.entries(options.attributes)) {
@@ -62,10 +108,6 @@ export async function withActiveSpan<T>(
   });
 }
 
-// Global tracking variables for ADK agent trajectory hierarchy
-export let activePipelineSpan: Span | undefined = undefined;
-export const activeAgentSpans = new Map<string, Span>();
-
 // Asynchronously load ADK and apply monkey patching to decouple tracing from circular dependencies
 import('@google/adk')
   .then((adk) => {
@@ -87,7 +129,10 @@ import('@google/adk')
             kind: SpanKind.INTERNAL,
             attributes: {
               'langsmith.span.kind': 'chain',
+              'openinference.span.kind': 'CHAIN',
               'inputs': JSON.stringify(state),
+              'input.value': JSON.stringify(state),
+              'gen_ai.content.prompt': JSON.stringify(state),
             }
           }, parentCtx);
           
@@ -107,6 +152,8 @@ import('@google/adk')
                     if (result.done) {
                       if (accumulatedContent) {
                         span.setAttribute('outputs', JSON.stringify({ content: accumulatedContent }));
+                        span.setAttribute('output.value', accumulatedContent);
+                        span.setAttribute('gen_ai.content.completion', accumulatedContent);
                       }
                       span.setStatus({ code: SpanStatusCode.OK });
                       span.end();
@@ -185,7 +232,10 @@ import('@google/adk')
             kind: SpanKind.INTERNAL,
             attributes: {
               'langsmith.span.kind': 'chain',
+              'openinference.span.kind': 'CHAIN',
               'inputs': JSON.stringify(state),
+              'input.value': JSON.stringify(state),
+              'gen_ai.content.prompt': JSON.stringify(state),
             }
           });
           
@@ -202,6 +252,10 @@ import('@google/adk')
                   try {
                     const result = await context.with(pipelineCtx, () => iterator.next(...nArgs));
                     if (result.done) {
+                      const finalState = ctx?.session?.state || {};
+                      span.setAttribute('outputs', JSON.stringify(finalState));
+                      span.setAttribute('output.value', JSON.stringify(finalState));
+                      span.setAttribute('gen_ai.content.completion', JSON.stringify(finalState));
                       span.setStatus({ code: SpanStatusCode.OK });
                       span.end();
                       if (activePipelineSpan === span) {
@@ -210,6 +264,9 @@ import('@google/adk')
                     }
                     return result;
                   } catch (error: any) {
+                    const finalState = ctx?.session?.state || {};
+                    span.setAttribute('outputs', JSON.stringify({ error: error.message, state: finalState }));
+                    span.setAttribute('output.value', JSON.stringify({ error: error.message, state: finalState }));
                     span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
                     span.recordException(error);
                     span.end();
@@ -223,6 +280,10 @@ import('@google/adk')
                   if (typeof iterator.return === 'function') {
                     try {
                       const result = await context.with(pipelineCtx, () => iterator.return!(...rArgs));
+                      const finalState = ctx?.session?.state || {};
+                      span.setAttribute('outputs', JSON.stringify(finalState));
+                      span.setAttribute('output.value', JSON.stringify(finalState));
+                      span.setAttribute('gen_ai.content.completion', JSON.stringify(finalState));
                       span.setStatus({ code: SpanStatusCode.OK });
                       span.end();
                       if (activePipelineSpan === span) {
@@ -230,6 +291,10 @@ import('@google/adk')
                       }
                       return result;
                     } catch (error: any) {
+                      const finalState = ctx?.session?.state || {};
+                      span.setAttribute('outputs', JSON.stringify({ error: error.message, state: finalState }));
+                      span.setAttribute('output.value', JSON.stringify({ error: error.message, state: finalState }));
+                      span.setAttribute('gen_ai.content.completion', JSON.stringify({ error: error.message, state: finalState }));
                       span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
                       span.recordException(error);
                       span.end();
@@ -239,6 +304,10 @@ import('@google/adk')
                       throw error;
                     }
                   }
+                  const finalState = ctx?.session?.state || {};
+                  span.setAttribute('outputs', JSON.stringify(finalState));
+                  span.setAttribute('output.value', JSON.stringify(finalState));
+                  span.setAttribute('gen_ai.content.completion', JSON.stringify(finalState));
                   span.setStatus({ code: SpanStatusCode.OK });
                   span.end();
                   if (activePipelineSpan === span) {
@@ -252,6 +321,8 @@ import('@google/adk')
                       const result = await context.with(pipelineCtx, () => iterator.throw!(...tArgs));
                       return result;
                     } catch (error: any) {
+                      const finalState = ctx?.session?.state || {};
+                      span.setAttribute('outputs', JSON.stringify({ error: error.message, state: finalState }));
                       span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
                       span.recordException(error);
                       span.end();
@@ -261,6 +332,10 @@ import('@google/adk')
                       throw error;
                     }
                   }
+                  const finalState = ctx?.session?.state || {};
+                  span.setAttribute('outputs', JSON.stringify({ error: tArgs[0]?.message || String(tArgs[0]), state: finalState }));
+                  span.setAttribute('output.value', JSON.stringify({ error: tArgs[0]?.message || String(tArgs[0]), state: finalState }));
+                  span.setAttribute('gen_ai.content.completion', JSON.stringify({ error: tArgs[0]?.message || String(tArgs[0]), state: finalState }));
                   span.setStatus({ code: SpanStatusCode.ERROR, message: tArgs[0]?.message || String(tArgs[0]) });
                   span.end();
                   if (activePipelineSpan === span) {

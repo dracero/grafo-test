@@ -26,7 +26,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Allow static assets, images, and non-auth API endpoints
   if (
     pathname.startsWith('/_astro/') ||
-    pathname.includes('.') ||
+    (pathname.includes('.') && !pathname.startsWith('/api/')) ||
     pathname.startsWith('/api/auth/')
   ) {
     return next();
