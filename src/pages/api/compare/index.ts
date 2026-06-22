@@ -210,7 +210,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
           }
 
           // Generate corrected PDF and cache it
-          const pdfBuffer = await generateCorrectedProgramPDF(progFile.name, progBuffer, corrections, correctedText, lang);
+          const pdfBuffer = await generateCorrectedProgramPDF(progFile.name, progBuffer, corrections, correctedText, lang, report.results);
           const downloadName = progFile.name.replace(/\.pdf$/i, '') + '_corregido.pdf';
           correctedPdfs.set(downloadName, pdfBuffer);
           logger.info('API', `Generated corrected PDF and cached as: ${downloadName} (${pdfBuffer.length} bytes)`);

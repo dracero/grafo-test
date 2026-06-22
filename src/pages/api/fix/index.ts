@@ -75,7 +75,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
               }
             }
             const originalBuffer = getOriginalPdfBuffer(programDocument);
-            const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, (report as any).correctedText || '', lang);
+            const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, (report as any).correctedText || '', lang, report.results);
             const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
             correctedPdfs.set(downloadName, pdfBuffer);
 
@@ -192,7 +192,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
             logger.warn('API', `Original PDF buffer not found for "${programDocument}" (neither in-memory nor on disk).`);
           }
 
-          const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, correctedText, lang);
+          const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, correctedText, lang, compReportForEnrich?.results || comparisonReport?.results);
           const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
           correctedPdfs.set(downloadName, pdfBuffer);
 

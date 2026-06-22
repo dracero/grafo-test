@@ -15,6 +15,7 @@
 import { PDFDocument } from 'pdf-lib';
 import PDFDocumentKit from 'pdfkit';
 import { createLogger } from './logger';
+import type { ComparisonResult } from './comparison';
 
 const logger = createLogger();
 
@@ -241,15 +242,36 @@ export async function generateCorrectedProgramPDF(
   originalPdf: Buffer | null,
   corrections: StructuredCorrection[],
   correctedText: string,
-  lang: string = 'es'
+  lang: string = 'es',
+  reportResults?: ComparisonResult[]
 ): Promise<Buffer> {
   logger.info('PDFGenerator', `Generating format-preserving corrected PDF for: ${programName} (lang: ${lang})`);
-  logger.info('PDFGenerator', `Received ${corrections.length} corrections to include in PDF annex`);
+  
+  let finalCorrections = corrections;
+  if (reportResults && reportResults.length > 0) {
+    const nonCompliances = reportResults.filter(r => r.status === 'partial' || r.status === 'missing');
+    finalCorrections = nonCompliances.map(r => {
+      const match = corrections.find(c => c.gapId && c.gapId.toLowerCase() === r.item.id.toLowerCase());
+      return {
+        gapId: r.item.id,
+        section: match?.section || r.item.category || 'General',
+        action: match?.action || (r.status === 'missing' ? 'agregar' : 'enriquecer'),
+        evidence: r.evidence || '',
+        suggestion: r.suggestion || '',
+        justification: match?.justification || (lang === 'gl' ? 'Adecuación requerida para cumplir coa normativa de referencia.' : 'Adecuación requerida para cumplir con la normativa de referencia.'),
+        correctedText: match?.correctedText || (lang === 'gl' ? 'Incorporar este aspecto de forma explícita na sección correspondente do programa.' : 'Incorporar este aspecto de forma explícita en la sección correspondiente del programa.'),
+        priority: match?.priority || (r.status === 'missing' ? 'alta' : 'media')
+      };
+    });
+    logger.info('PDFGenerator', `Aligned and generated ${finalCorrections.length} corrections matching non-compliance gaps`);
+  } else {
+    logger.info('PDFGenerator', `Received ${corrections.length} corrections to include in PDF annex`);
+  }
 
   const labels = getLabels(lang);
 
   // ── Step 1: Create the appendix pages with PDFKit ────────────────────
-  const appendixBuffer = await generateAppendixPDF(programName, corrections, correctedText, labels);
+  const appendixBuffer = await generateAppendixPDF(programName, finalCorrections, correctedText, labels);
 
   if (!originalPdf || originalPdf.length === 0) {
     logger.warn('PDFGenerator', 'No original PDF available — returning appendix-only PDF');
