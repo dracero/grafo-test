@@ -4,10 +4,8 @@
  */
 import type { APIRoute } from 'astro';
 import { getServices, getOriginalPdfBuffer, correctedPdfs } from '../../../lib/services';
-import { runCorrectionPipeline } from '../../../services/multi-agent-service';
-import { generateCorrectedProgramPDF, parseCorrections } from '../../../services/pdf-generator';
+import { generateCorrectedProgramPDF } from '../../../services/pdf-generator';
 import { createLogger } from '../../../services/logger';
-import { normalizeStatus } from '../../../services/comparison';
 
 const logger = createLogger();
 
@@ -39,145 +37,71 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          // Check if we already have the comparison and corrections in Neo4j
+          // Fetch the latest comparison report from Neo4j
           const report = await graphBuilder.getLatestComparison(userEmail);
-          if (report && report.programDocument === programDocument && report.normativeDocument === normativeDocument && (report as any).correctionsJson) {
-            logger.info('API', `Found stored corrections for "${programDocument}" in Neo4j. Skipping agents pipeline.`);
+          if (!report || report.programDocument !== programDocument || report.normativeDocument !== normativeDocument) {
+            throw new Error(lang === 'gl'
+              ? 'Non se atopou un informe de comparación previo para este documento.'
+              : 'No se encontró un reporte de comparación previo para este documento.');
+          }
+
+          // Construct corrections list from the report results if they don't exist in the database
+          let corrections: any[] = [];
+          let correctedText = (report as any).correctedText || '';
+
+          if ((report as any).correctionsJson) {
+            corrections = JSON.parse((report as any).correctionsJson);
+          } else {
+            // Construct corrections directly from report.results (HTML/database)
+            const nonCompliances = report.results.filter(r => r.status === 'partial' || r.status === 'missing');
+            corrections = nonCompliances.map(r => ({
+              gapId: r.item.id,
+              section: r.item.category || 'General',
+              action: r.status === 'missing' ? 'agregar' : 'enriquecer',
+              evidence: r.evidence || '',
+              suggestion: '', // set to empty to avoid duplicate printing in generateAppendixPDF
+              justification: lang === 'gl'
+                ? 'Adecuación requerida para cumplir coa normativa de referencia.'
+                : 'Adecuación requerida para cumplir con la normativa de referencia.',
+              correctedText: r.suggestion || (lang === 'gl'
+                ? 'Incorporar este aspecto de forma explícita na sección correspondente do programa.'
+                : 'Incorporar este aspecto de forma explícita en la sección correspondiente del programa.'),
+              priority: r.status === 'missing' ? 'alta' : 'media'
+            }));
+            correctedText = JSON.stringify({ corrections }, null, 2);
             
-            // Stream the cached progress steps quickly so the UI updates
-            const cachedSteps = [
-              { step: 'NormativeOntologyAgent', content: 'Cargado de caché' },
-              { step: 'ProgramOntologyAgent', content: 'Cargado de caché' },
-              { step: 'StructureAnalyzerAgent', content: 'Cargado de caché' },
-              { step: 'ComplianceGapsAgent', content: 'Cargado de caché' },
-              { step: 'ComplianceValidatorAgent', content: 'Cargado de caché' },
-              { step: 'ProgramFixerAgent', content: (report as any).correctedText || '' }
-            ];
+            // Save corrections list to the graph
+            await graphBuilder.saveCorrections(programDocument, corrections, correctedText, userEmail);
+            logger.info('API', `Generated and stored corrections from ${corrections.length} non-compliance gaps in Neo4j.`);
+          }
 
-            for (const stepInfo of cachedSteps) {
-              controller.enqueue(encoder.encode(
-                JSON.stringify({ type: 'progress', step: stepInfo.step, content: stepInfo.content, isFinal: true }) + '\n'
-              ));
-              // Small delay to simulate rendering smoothly
-              await new Promise(r => setTimeout(r, 50));
-            }
+          // Stream the cached progress steps quickly so the UI updates
+          const cachedSteps = [
+            { step: 'NormativeOntologyAgent', content: 'Cargado de caché' },
+            { step: 'ProgramOntologyAgent', content: 'Cargado de caché' },
+            { step: 'StructureAnalyzerAgent', content: 'Cargado de caché' },
+            { step: 'ComplianceGapsAgent', content: 'Cargado de caché' },
+            { step: 'ComplianceValidatorAgent', content: 'Cargado de caché' },
+            { step: 'ProgramFixerAgent', content: correctedText }
+          ];
 
-            const corrections = JSON.parse((report as any).correctionsJson);
-            // Enrich corrections with evidence/suggestion from comparison results
-            const resultsMap = new Map(report.results.map(r => [r.item.id.toLowerCase(), r]));
-            for (const corr of corrections) {
-              if (corr.gapId) {
-                const match = resultsMap.get(corr.gapId.toLowerCase());
-                if (match) {
-                  corr.evidence = match.evidence || '';
-                  corr.suggestion = match.suggestion || '';
-                }
-              }
-            }
-            const originalBuffer = getOriginalPdfBuffer(programDocument);
-            const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, (report as any).correctedText || '', lang, report.results);
-            const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
-            correctedPdfs.set(downloadName, pdfBuffer);
-
+          for (const stepInfo of cachedSteps) {
             controller.enqueue(encoder.encode(
-              JSON.stringify({
-                type: 'complete',
-                downloadUrl: `/api/fix/download/${encodeURIComponent(downloadName)}`,
-                correctedText: (report as any).correctedText || '',
-              }) + '\n'
+              JSON.stringify({ type: 'progress', step: stepInfo.step, content: stepInfo.content, isFinal: true }) + '\n'
             ));
-            
-            controller.close();
-            return;
+            // Small delay to simulate rendering smoothly
+            await new Promise(r => setTimeout(r, 50));
           }
 
-          const pipeline = runCorrectionPipeline(normativeDocument, programDocument, graphBuilder, provider, lang, userEmail);
-          let correctedText = '';
-          let validatedComplianceText = '';
-
-          for await (const update of pipeline) {
-            controller.enqueue(encoder.encode(
-              JSON.stringify({ type: 'progress', step: update.step, content: update.content, isFinal: update.isFinal }) + '\n'
-            ));
-            if (update.step === 'ProgramFixerAgent' && update.isFinal) {
-              correctedText = update.content;
-            }
-            if (update.step === 'ComplianceValidatorAgent' && update.isFinal) {
-              validatedComplianceText = update.content;
-            }
-          }
-
-          if (!correctedText) {
-            throw new Error('El agente corrector no generó ningún contenido corregido.');
-          }
-
-          const corrections = parseCorrections(correctedText);
-          logger.info('API', `Parsed ${corrections.length} structured corrections from agent output`);
-
-          let validatedGaps: any[] = [];
-          let excludedGaps: any[] = [];
-          if (validatedComplianceText) {
-            try {
-              const cleanedText = validatedComplianceText.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim();
-              const parsed = JSON.parse(cleanedText);
-              validatedGaps = parsed.validatedGaps || [];
-              excludedGaps = parsed.excludedGaps || [];
-              logger.info('API', `Parsed validated compliance analysis: ${validatedGaps.length} validated, ${excludedGaps.length} excluded`);
-            } catch (err) {
-              logger.warn('API', 'Could not parse validated compliance analysis output as JSON', err as Error);
-            }
-          }
-
-          // Update report results based on validated compliance gaps
-          const comparisonReport = await graphBuilder.getLatestComparison(userEmail);
-          if (comparisonReport && comparisonReport.programDocument === programDocument && comparisonReport.normativeDocument === normativeDocument) {
-            const validatedGapsMap = new Map(validatedGaps.map((g: any) => [g.id, g]));
-            const excludedGapsMap = new Map(excludedGaps.map((g: any) => [g.id, g]));
-
-            for (const result of comparisonReport.results) {
-              const reqId = result.item.id;
-              if (excludedGapsMap.has(reqId)) {
-                const excl = excludedGapsMap.get(reqId);
-                result.status = 'covered';
-                result.evidence = excl.reason || result.evidence;
-                result.suggestion = 'Ninguna';
-              } else if (validatedGapsMap.has(reqId)) {
-                const val = validatedGapsMap.get(reqId);
-                result.status = normalizeStatus(val.status);
-                result.evidence = val.evidence || result.evidence;
-                result.suggestion = val.suggestion || result.suggestion;
-              }
-            }
-
-            // Recalculate summary metrics
-            const covered = comparisonReport.results.filter((r) => r.status === 'covered').length;
-            const partial = comparisonReport.results.filter((r) => r.status === 'partial').length;
-            const missing = comparisonReport.results.filter((r) => r.status === 'missing').length;
-            const total   = comparisonReport.results.length;
-            const coveragePercent = total > 0
-              ? Math.round(((covered + partial * 0.5) / total) * 100)
-              : 0;
-
-            comparisonReport.summary = { total, covered, partial, missing, coveragePercent };
-
-            // Save the updated comparison report back to Neo4j
-            await graphBuilder.saveComparisonReport(comparisonReport, userEmail);
-            logger.info('API', 'Updated comparison report with validated/excluded gaps saved in Neo4j during fix');
-          }
-
-          // Save corrections list to the graph
-          await graphBuilder.saveCorrections(programDocument, corrections, correctedText, userEmail);
-
-          // Enrich corrections with evidence/suggestion from comparison results
-          const compReportForEnrich = await graphBuilder.getLatestComparison(userEmail);
-          if (compReportForEnrich) {
-            const resultsMap = new Map(compReportForEnrich.results.map(r => [r.item.id.toLowerCase(), r]));
-            for (const corr of corrections) {
-              if (corr.gapId) {
-                const match = resultsMap.get(corr.gapId.toLowerCase());
-                if (match) {
-                  corr.evidence = match.evidence || '';
-                  corr.suggestion = match.suggestion || '';
+          // Enrich corrections with evidence/suggestion from comparison results if needed
+          const resultsMap = new Map(report.results.map(r => [r.item.id.toLowerCase(), r]));
+          for (const corr of corrections) {
+            if (corr.gapId) {
+              const match = resultsMap.get(corr.gapId.toLowerCase());
+              if (match) {
+                corr.evidence = match.evidence || '';
+                if (corr.suggestion !== '') {
+                  corr.suggestion = '';
                 }
               }
             }
@@ -192,21 +116,19 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
             logger.warn('API', `Original PDF buffer not found for "${programDocument}" (neither in-memory nor on disk).`);
           }
 
-          const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, correctedText, lang, compReportForEnrich?.results || comparisonReport?.results);
+          const pdfBuffer = await generateCorrectedProgramPDF(programDocument, originalBuffer, corrections, correctedText, lang, undefined);
           const downloadName = programDocument.replace(/\.pdf$/i, '') + '_corregido.pdf';
           correctedPdfs.set(downloadName, pdfBuffer);
-
-          const finalReport = await graphBuilder.getLatestComparison(userEmail);
 
           controller.enqueue(encoder.encode(
             JSON.stringify({
               type: 'complete',
               downloadUrl: `/api/fix/download/${encodeURIComponent(downloadName)}`,
               correctedText,
-              data: finalReport || comparisonReport,
+              data: report,
             }) + '\n'
           ));
-
+          
           controller.close();
         } catch (error: any) {
           logger.error('API', 'Error running fix pipeline', error);

@@ -507,7 +507,7 @@ async function generateAppendixPDF(
           }
 
           // Suggestion (from comparison results — matches HTML output)
-          if (c.suggestion && c.suggestion !== 'Ninguna') {
+          if (c.suggestion && c.suggestion !== 'Ninguna' && c.suggestion !== c.correctedText) {
             doc.fillColor('#6b7280')
                .font('Helvetica-Bold')
                .fontSize(9)
@@ -520,7 +520,7 @@ async function generateAppendixPDF(
           }
 
           // Justification
-          if (c.justification) {
+          if (c.justification && c.justification !== c.evidence) {
             doc.fillColor('#6b7280')
                .font('Helvetica-Bold')
                .fontSize(9)
