@@ -135,7 +135,11 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
           }
 
           if (!correctedText) {
-            throw new Error('El agente corrector no generó ningún contenido corregido.');
+            logger.warn('API', 'ProgramFixerAgent did not generate corrected content. Proceeding with comparison report only (0 corrections).');
+            // Send a warning to the client but don't crash the pipeline
+            controller.enqueue(encoder.encode(
+              JSON.stringify({ type: 'progress', step: 'ProgramFixerAgent', content: '⚠️ El agente corrector no generó correcciones. Se mostrará solo el informe de comparación.', isFinal: true }) + '\n'
+            ));
           }
 
           // 3. Parse corrections and update Neo4j

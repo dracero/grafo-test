@@ -233,13 +233,23 @@ export class ComparisonService {
   }
 
   private async generateWithRetry(options: any, operationName: string, provider?: string): Promise<any> {
-    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
-    const modelName = isGroq ? 'llama-3.3-70b-versatile' : (options.model || 'googleai/gemini-2.5-flash');
-    const systemName = isGroq ? 'groq' : 'gemini';
+    const normProvider = (provider || '').toLowerCase().trim();
+    const isGroq = normProvider === 'groq';
+    const isGroqFast = normProvider === 'groq-fast';
+
+    let modelName = options.model || 'googleai/gemini-2.5-flash';
+    let systemName = 'gemini';
+    if (isGroq) {
+      modelName = 'llama-3.3-70b-versatile';
+      systemName = 'groq';
+    } else if (isGroqFast) {
+      modelName = 'llama-3.1-8b-instant';
+      systemName = 'groq';
+    }
 
     let attempt = 0;
     const maxRetries = 8;
-    let delay = isGroq ? 3000 : 5000;
+    let delay = (isGroq || isGroqFast) ? 3000 : 5000;
 
     const span = tracer.startSpan(`ComparisonService:${operationName}`, {
       kind: SpanKind.CLIENT,
@@ -258,11 +268,12 @@ export class ComparisonService {
       while (attempt < maxRetries) {
         attempt++;
         try {
-          if (isGroq) {
+          if (isGroq || isGroqFast) {
             const apiKey = apiKeyManager.getCurrentGroqKey();
             if (!apiKey) {
               throw new Error('GROQ_API_KEY is not defined in the environment or ApiKeyManager.');
             }
+            const activeModel = isGroqFast ? 'llama-3.1-8b-instant' : 'llama-3.3-70b-versatile';
             const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
               headers: {
@@ -270,7 +281,7 @@ export class ComparisonService {
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
+                model: activeModel,
                 messages: [
                   { role: 'user', content: options.prompt }
                 ],
@@ -405,22 +416,29 @@ export class ComparisonService {
   }
 
   private safeText(text: string, label: string, provider?: string): string {
-    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
-    const limit = isGroq ? 20_000 : MAX_CHARS_PER_DOC;
+    const normProvider = (provider || '').toLowerCase().trim();
+    const isGroq = normProvider === 'groq';
+    const isGroqFast = normProvider === 'groq-fast';
+    
+    const limit = isGroq ? 20_000 : (isGroqFast ? 12_000 : MAX_CHARS_PER_DOC);
+    const providerLabel = isGroq ? 'Groq Llama 3.3' : (isGroqFast ? 'Groq Llama 3.1' : 'Gemini');
     
     if (text.length <= limit) return text;
     logger.warn(
       'Comparison',
-      `[${label}] Documento muy largo (${text.length} chars) para ${isGroq ? 'Groq' : 'Gemini'} — truncado a ${limit} chars.`
+      `[${label}] Documento muy largo (${text.length} chars) para ${providerLabel} — truncado a ${limit} chars.`
     );
-    return text.substring(0, limit) + `\n\n[DOCUMENTO TRUNCADO para cumplir con los límites de la API de ${isGroq ? 'Groq' : 'Gemini'}]`;
+    return text.substring(0, limit) + `\n\n[DOCUMENTO TRUNCADO para cumplir con los límites de la API de ${providerLabel}]`;
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
 
   async extractOntology(normativeText: string, provider?: string): Promise<OntologyItem[]> {
-    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
-    logger.info('Comparison', `Extrayendo ontología del documento normativo con ${isGroq ? 'Groq Llama 3.3' : 'Gemini 2.5 Flash'}…`);
+    const normProvider = (provider || '').toLowerCase().trim();
+    const isGroq = normProvider === 'groq';
+    const isGroqFast = normProvider === 'groq-fast';
+    const providerLabel = isGroq ? 'Groq Llama 3.3' : (isGroqFast ? 'Groq Llama 3.1' : 'Gemini 2.5 Flash');
+    logger.info('Comparison', `Extrayendo ontología del documento normativo con ${providerLabel}…`);
     const safeText = this.safeText(normativeText, 'Normativo', provider);
 
     const prompt = `Eres un experto en análisis de documentos normativos educativos y acreditación universitaria.
@@ -446,12 +464,13 @@ INSTRUCCIONES:
 DOCUMENTO NORMATIVO:
 ${safeText}`;
 
+    const maxTokens = isGroq ? 4096 : (isGroqFast ? 1536 : MAX_OUTPUT_TOKENS);
     const response = await this.generateWithRetry(
       {
-        model: isGroq ? 'groq/llama-3.3-70b-versatile' : MODEL_FLASH,
+        model: isGroq ? 'groq/llama-3.3-70b-versatile' : (isGroqFast ? 'groq/llama-3.1-8b-instant' : MODEL_FLASH),
         prompt,
         output: { format: 'text' },
-        config: { maxOutputTokens: isGroq ? 4096 : MAX_OUTPUT_TOKENS },
+        config: { maxOutputTokens: maxTokens },
       },
       'extractOntology',
       provider
@@ -469,8 +488,11 @@ ${safeText}`;
   }
 
   async extractProgramOntology(programText: string, provider?: string): Promise<OntologyItem[]> {
-    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
-    logger.info('Comparison', `Extrayendo ontología del programa con ${isGroq ? 'Groq Llama 3.3' : 'Gemini 2.5 Flash'}…`);
+    const normProvider = (provider || '').toLowerCase().trim();
+    const isGroq = normProvider === 'groq';
+    const isGroqFast = normProvider === 'groq-fast';
+    const providerLabel = isGroq ? 'Groq Llama 3.3' : (isGroqFast ? 'Groq Llama 3.1' : 'Gemini 2.5 Flash');
+    logger.info('Comparison', `Extrayendo ontología del programa con ${providerLabel}…`);
     const safeText = this.safeText(programText, 'Programa', provider);
 
     const prompt = `Eres un experto en análisis de programas de materias universitarias (sílabos).
@@ -499,12 +521,13 @@ INSTRUCCIONES CRÍTICAS DE NORMALIZACIÓN (LIMITACIÓN DE GRANULARIDAD):
 PROGRAMA DE LA MATERIA:
 ${safeText}`;
 
+    const maxTokens = isGroq ? 4096 : (isGroqFast ? 1536 : MAX_OUTPUT_TOKENS);
     const response = await this.generateWithRetry(
       {
-        model: isGroq ? 'groq/llama-3.3-70b-versatile' : MODEL_FLASH,
+        model: isGroq ? 'groq/llama-3.3-70b-versatile' : (isGroqFast ? 'groq/llama-3.1-8b-instant' : MODEL_FLASH),
         prompt,
         output: { format: 'text' },
-        config: { maxOutputTokens: isGroq ? 4096 : MAX_OUTPUT_TOKENS },
+        config: { maxOutputTokens: maxTokens },
       },
       'extractProgramOntology',
       provider
@@ -526,10 +549,13 @@ ${safeText}`;
     normativeOntology: OntologyItem[],
     provider?: string
   ): Promise<ComparisonResult[]> {
-    const isGroq = (provider || '').toLowerCase().trim() === 'groq';
+    const normProvider = (provider || '').toLowerCase().trim();
+    const isGroq = normProvider === 'groq';
+    const isGroqFast = normProvider === 'groq-fast';
+    const providerLabel = isGroq ? 'Groq Llama 3.3' : (isGroqFast ? 'Groq Llama 3.1' : 'Gemini 2.5 Flash');
     logger.info(
       'Comparison',
-      `Comparando holísticamente en lotes con ${isGroq ? 'Groq Llama 3.3' : 'Gemini 2.5 Flash'}: ${programOntology.length} ítems de programa vs ${normativeOntology.length} normativos…`
+      `Comparando holísticamente en lotes con ${providerLabel}: ${programOntology.length} ítems de programa vs ${normativeOntology.length} normativos…`
     );
 
     const BATCH_SIZE = 100;
@@ -544,7 +570,8 @@ ${safeText}`;
 
     for (let i = 0; i < programOntology.length; i += BATCH_SIZE) {
       if (i > 0) {
-        logger.info('Comparison', 'Waiting 6 seconds to respect Gemini API rate limits (15/20 RPM)...');
+        const waitLabel = (isGroq || isGroqFast) ? 'Groq' : 'Gemini';
+        logger.info('Comparison', `Waiting 6 seconds to respect ${waitLabel} API rate limits...`);
         await new Promise((resolve) => setTimeout(resolve, 6000));
       }
 
@@ -577,7 +604,7 @@ Para CADA ítem del programa (hay exactamente ${batch.length}), determina:
 
 REGLAS DE EVALUACIÓN SEMÁNTICA Y CONDICIONAL:
 1. Usa razonamiento semántico avanzado: un ítem del programa puede estar alineado con la normativa conceptualmente aunque se exprese con terminología diferente.
-2. DECLARACIONES NEGATIVAS O DE NO APLICABILIDAD: Si un requisito exige especificar, detallar o regular cierto aspecto y la guía docente/programa indica de manera explícita que NO aplica, que NO se concede, o que NINGUNA actividad/recurso está sujeto a ello, este aspecto se debe evaluar como "covered" (cubierto) y NO como "missing" o "partial".
+2. DECLARACIONES NEGATIVAS O DE NO APLICABILIDAD: Si un requisito exige especificar, detallar o regular cierto aspecto y la guía docente/programa indica de manera explícita que NO aplica, que NO se concede, o que NINGUNA actividad/recurso está sujeto a ello, este aspecto se debe evaluar como "covered" (cubierto) and NO como "missing" o "partial".
 
 Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
 
@@ -601,12 +628,13 @@ REQUISITOS NORMATIVOS DE REFERENCIA (${normativeOntology.length} items):
 ═══════════════════════════════════════════════════════════
 ${normativeList}`;
 
+      const maxTokens = isGroq ? 4096 : (isGroqFast ? 1536 : MAX_OUTPUT_TOKENS);
       const response = await this.generateWithRetry(
         {
-          model: isGroq ? 'groq/llama-3.3-70b-versatile' : MODEL_FLASH,
+          model: isGroq ? 'groq/llama-3.3-70b-versatile' : (isGroqFast ? 'groq/llama-3.1-8b-instant' : MODEL_FLASH),
           prompt,
           output: { format: 'text' },
-          config: { maxOutputTokens: isGroq ? 4096 : MAX_OUTPUT_TOKENS },
+          config: { maxOutputTokens: maxTokens },
         },
         `compareOntologies_batch_${Math.floor(i / BATCH_SIZE) + 1}`,
         provider

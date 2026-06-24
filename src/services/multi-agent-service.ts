@@ -38,7 +38,10 @@ export async function* runCorrectionPipeline(
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('NormativeOntologyAgent', `Fetching normative ontology (via program doc entities: ${progDoc}) for user: ${email}`);
       
-      const ontology = await graphBuilder.getProgramOntology(progDoc || '', email);
+      let ontology = await graphBuilder.getProgramOntology(progDoc || '', email);
+      if (provider === 'groq-fast') {
+        ontology = ontology.slice(0, 15);
+      }
       return `Eres el agente especialista en ontología normativa. Tu objetivo es leer y estructurar de forma clara los requisitos y estándares normativos provistos desde la base de datos de Neo4j para el documento normativo "${normDoc}".
       
       Aquí está la ontología normativa extraída:
@@ -59,7 +62,10 @@ export async function* runCorrectionPipeline(
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ProgramOntologyAgent', `Fetching program ontology (via normative doc OntologyItems: ${normDoc}) for user: ${email}`);
       
-      const ontology = await graphBuilder.getNormativeOntology(normDoc || '', email);
+      let ontology = await graphBuilder.getNormativeOntology(normDoc || '', email);
+      if (provider === 'groq-fast') {
+        ontology = ontology.slice(0, 15);
+      }
       return `Eres el agente especialista en programas de materias. Tu objetivo es leer y estructurar el contenido actual del programa de materia "${progDoc}" utilizando la información de conceptos y temas cargados en el grafo de Neo4j.
       
       Aquí están los conceptos y contenidos extraídos de la materia:
@@ -79,7 +85,10 @@ export async function* runCorrectionPipeline(
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('StructureAnalyzerAgent', `Analyzing original structure for: ${progDoc} for user: ${email}`);
       
-      const originalText = await graphBuilder.getProgramText(progDoc || '', email);
+      let originalText = await graphBuilder.getProgramText(progDoc || '', email);
+      if (provider === 'groq-fast' && originalText.length > 8000) {
+        originalText = originalText.substring(0, 8000) + '\n... [Texto truncado para el modelo rápido]';
+      }
       return `Eres el agente especialista en análisis de estructura de documentos. Tu objetivo es leer el texto del programa de materia "${progDoc}" y extraer su estructura (secciones, subsecciones, tablas, y estilo de viñetas).
       
       Texto del programa:
@@ -100,7 +109,10 @@ export async function* runCorrectionPipeline(
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ComplianceGapsAgent', `Fetching compliance gaps between ${progDoc} and ${normDoc} for user: ${email}`);
       
-      const gaps = await graphBuilder.getComplianceGaps(normDoc || '', progDoc || '', email);
+      let gaps = await graphBuilder.getComplianceGaps(normDoc || '', progDoc || '', email);
+      if (provider === 'groq-fast') {
+        gaps = gaps.slice(0, 15);
+      }
       return `Eres el agente especialista en análisis de cumplimiento de planes de estudio universitarios. Tu objetivo es consolidar y detallar las brechas de cumplimiento detectadas (requisitos faltantes o parcialmente cubiertos) en el plan de estudios de la carrera "${progDoc}" con respecto a la norma "${normDoc}".
       
       Aquí están los resultados de cumplimiento parciales o faltantes extraídos de Neo4j:
@@ -133,8 +145,14 @@ export async function* runCorrectionPipeline(
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ComplianceValidatorAgent', `Validating compliance gaps between ${progDoc} and ${normDoc} for user: ${email}`);
 
-      const originalText = await graphBuilder.getProgramText(progDoc || '', email);
-      const complianceAnalysis = context.state.get<string>('app:compliance_analysis') || '';
+      let originalText = await graphBuilder.getProgramText(progDoc || '', email);
+      if (provider === 'groq-fast' && originalText.length > 8000) {
+        originalText = originalText.substring(0, 8000) + '\n... [Texto truncado para el modelo rápido]';
+      }
+      let complianceAnalysis = context.state.get<string>('app:compliance_analysis') || '';
+      if (provider === 'groq-fast' && complianceAnalysis.length > 3000) {
+        complianceAnalysis = complianceAnalysis.substring(0, 3000) + '\n... [Análisis truncado]';
+      }
 
       return `Eres el Agente Validador de Cumplimiento Semántico. Tu rol es analizar críticamente las brechas de cumplimiento detectadas y el texto original del programa para filtrar falsos positivos o recomendaciones redundantes e innecesarias.
 
@@ -186,12 +204,24 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ProgramFixerAgent', `Fetching original text for program doc: ${progDoc} for user: ${email}`);
       
-      const originalText = await graphBuilder.getProgramText(progDoc || '', email);
+      let originalText = await graphBuilder.getProgramText(progDoc || '', email);
+      if (provider === 'groq-fast' && originalText.length > 8000) {
+        originalText = originalText.substring(0, 8000) + '\n... [Texto truncado para el modelo rápido]';
+      }
       
       // Retrieve intermediate analyses from state
-      const normativeAnalysis = context.state.get<string>('app:normative_analysis') || '';
-      const validatedComplianceAnalysis = context.state.get<string>('app:validated_compliance_analysis') || '';
-      const originalStructure = context.state.get<string>('app:original_structure') || '';
+      let normativeAnalysis = context.state.get<string>('app:normative_analysis') || '';
+      if (provider === 'groq-fast' && normativeAnalysis.length > 2000) {
+        normativeAnalysis = normativeAnalysis.substring(0, 2000) + '\n... [Análisis truncado]';
+      }
+      let validatedComplianceAnalysis = context.state.get<string>('app:validated_compliance_analysis') || '';
+      if (provider === 'groq-fast' && validatedComplianceAnalysis.length > 3000) {
+        validatedComplianceAnalysis = validatedComplianceAnalysis.substring(0, 3000) + '\n... [Análisis truncado]';
+      }
+      let originalStructure = context.state.get<string>('app:original_structure') || '';
+      if (provider === 'groq-fast' && originalStructure.length > 2000) {
+        originalStructure = originalStructure.substring(0, 2000) + '\n... [Estructura truncada]';
+      }
       
       // Parse validated gaps to count them for verification
       let validatedGapsCount = 0;
@@ -300,6 +330,12 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
   logger.info('MultiAgentService', `Pipeline started at ${new Date().toISOString()}`);
 
   for await (const event of iterator) {
+    // Log LLM-level errors that ADK may surface in the event
+    const eventAny = event as any;
+    if (eventAny.errorCode || eventAny.errorMessage) {
+      logger.error('MultiAgentService', `LLM error in agent [${event.author || 'unknown'}]: code=${eventAny.errorCode} msg=${eventAny.errorMessage}`, new Error(String(eventAny.errorMessage || eventAny.errorCode)));
+    }
+
     if (event.author && event.author !== 'user' && event.author !== 'CorrectionPipeline') {
       // Track agent start
       if (!startedAgents.has(event.author)) {
@@ -317,12 +353,24 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
 
         if (isFinal) {
           logger.info('MultiAgentService', `✔ Agent [${event.author}] finished processing (output: ${content.length} chars)`);
+          // Log the first 500 chars of the final output for debugging
+          const preview = content.length > 500 ? content.substring(0, 500) + '…' : content;
+          logger.info('MultiAgentService', `   [${event.author}] output preview: ${preview}`);
         }
 
         yield {
           step: event.author as any,
           content,
           isFinal
+        };
+      } else if (isFinalResponse(event)) {
+        // Agent finished but produced empty content — this is the bug
+        logger.warn('MultiAgentService', `⚠ Agent [${event.author}] finished with EMPTY content. Event keys: ${Object.keys(eventAny).join(', ')}`);
+        // Still yield so the caller knows the agent ran
+        yield {
+          step: event.author as any,
+          content: '',
+          isFinal: true
         };
       }
     }

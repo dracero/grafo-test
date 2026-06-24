@@ -143,7 +143,9 @@ export class GroqLlm extends BaseLlm {
               model: modelName,
               messages,
               temperature: llmRequest.config?.temperature ?? 0.2,
-              max_tokens: llmRequest.config?.maxOutputTokens ?? 4096,
+              max_tokens: modelName === 'llama-3.1-8b-instant'
+                ? Math.min(llmRequest.config?.maxOutputTokens ?? 4096, 1536)
+                : (llmRequest.config?.maxOutputTokens ?? 4096),
             }),
             signal: abortSignal
           });
