@@ -332,6 +332,96 @@ graph TD
 2.  **Prevención de Páginas en Blanco (Bug de Auto-Pagination)**: El Arnés de Evaluación analiza página por página el texto extraído del PDF final. Si la longitud de caracteres en el cuerpo de cualquier página es 0, el arnés falla inmediatamente con error `exit 1`.
 
 ---
+---
+
+## 📈 Optimización de Prompts (DSPy & GEPA)
+
+El sistema incorpora un arnés de **Optimización de Prompts offline** basado en los conceptos de **DSPy** (Signatures y Plantillas desacopladas) y ejecuta el motor evolutivo **GEPA** (Gradient-free Evolution of Prompts and Agents) mediante la biblioteca `gepa-ts`.
+
+### 1. Concepto y Flujo de Trabajo
+
+El flujo de optimización está completamente desacoplado del "Hot Path" de producción para evitar latencias de red y consumo excesivo de tokens durante las consultas habituales de los usuarios:
+
+```mermaid
+flowchart TD
+    subgraph "PRODUCCIÓN (Hot Path - Rápido)"
+        A[Astro: /api/compare] --> B[Ejecutar Pipeline ADK]
+        B --> C[Leer src/prompts/AgentName.json]
+        C --> B
+    end
+
+    subgraph "HUMAN-IN-THE-LOOP (Curación)"
+        B -->|Trazas OTel| D[Langsmith REST API]
+        E[Admin en /admin/dataset-curator] -->|Busca runs| D
+        E -->|Corrige salidas| F[(MongoDB: OptimizationDataset)]
+    end
+
+    subgraph "OPTIMIZACIÓN GEPA (Offline - CLI)"
+        G[npm run optimize] --> H[scripts/optimize.ts]
+        F -->|Carga dataset curado| H
+        H -->|Evolución GEPA| I[Escribe prompt optimizado]
+        I -->|Sobrescribe| C
+    end
+
+    style C fill:#49a,stroke:#333
+    style F fill:#4a9,stroke:#333
+    style H fill:#a49,stroke:#333
+```
+
+1. **Signatures Locales**: Los prompts activos de los agentes se guardan en archivos JSON físicos (`src/prompts/<AgentName>.json`) declarando sus firmas de entrada/salida y su plantilla de instrucción.
+2. **Curación (Human-in-the-Loop)**: El panel administrador `/admin/dataset-curator` permite consultar ejecuciones reales registradas en Langsmith, corregir a mano las respuestas del LLM que fueron deficientes, y guardarlas en la colección MongoDB `OptimizationDataset` como "Gold Standard".
+3. **Evolución GEPA**: De forma offline, el script de optimización carga los casos curados de MongoDB, genera mutaciones del prompt y evalúa cuáles candidatos obtienen la mejor calificación promedio. Al finalizar, actualiza automáticamente el JSON local.
+
+---
+
+### 2. El Rol de los dos LLM en la Optimización
+
+GEPA trabaja con dos categorías asimétricas de modelos para equilibrar precisión y costo:
+
+#### A. Task & Judge LLM (Modelo de Tarea y Juez)
+*   **Rol**:
+    *   **Modelo de Tarea**: Ejecuta el prompt candidato sobre las entradas del ejemplo para producir la salida del agente.
+    *   **Modelo de Juez**: Actúa como un evaluador semántico (*LLM-as-a-judge*). Compara la respuesta generada por el candidato frente al Gold Standard (respuesta esperada de la base de datos) y emite una puntuación decimal de `0.0` a `1.0` con una breve justificación en español.
+*   **Modelos Recomendados**: Modelos muy rápidos y económicos como `gemini-2.5-flash` o `groq` (`llama-3.3-70b-versatile`).
+
+#### B. Reflection LLM (Modelo de Reflexión)
+*   **Rol**: Analiza el prompt actual, el historial de ejecuciones evaluadas (entradas, salidas generadas, Gold Standard, scores y el feedback del Juez) y propone una instrucción nueva y corregida que solucione de forma inteligente los errores detectados en la iteración anterior.
+*   **Modelos Recomendados**: Modelos con alta capacidad de razonamiento. Por defecto utiliza `gemini-2.5-flash` para evitar límites de cuota (Rate Limits), pero permite alternar a `gemini-2.5-pro` para proponer ideas de mutación significativamente más sofisticadas.
+
+---
+
+### 3. Comandos de Consola y Ejecución
+
+El sistema proporciona dos scripts en la raíz del proyecto para evaluar y optimizar:
+
+#### A. Medir Calidad Actual (Evaluación)
+Mide el score del prompt que está guardado actualmente en tu disco local contra las muestras curadas en MongoDB.
+```bash
+# Formato: npm run evaluate -- --agent <NombreAgente> [--provider <provider>] [--judge <provider>]
+npm run evaluate -- --agent ComplianceValidatorAgent
+```
+*Si la base de datos no tiene curaciones previas para ese agente, el script sembrará ejemplos de prueba realistas de forma automática.*
+
+#### B. Ejecutar el Optimizador GEPA
+Corre el bucle evolutivo para refinar la plantilla de instrucción y sobrescribir el archivo local.
+```bash
+# Formato: npm run optimize -- --agent <NombreAgente> [--provider <provider>] [--max-calls <n>] [--reflection-model <model>]
+npm run optimize -- --agent ComplianceValidatorAgent --max-calls 6 --reflection-model gemini-2.5-flash
+```
+
+---
+
+### 4. Cómo Comparar y Validar los Resultados
+
+Para contrastar el impacto de la optimización en los prompts de tus agentes:
+1.  **Score Promedio en Consola**: Al finalizar la optimización, la consola imprime el **Score Inicial Estimado** del prompt baseline frente al **Score del Mejor Candidato** tras aplicar las mutaciones.
+2.  **Git Diff**: Al guardarse físicamente en los archivos JSON del repositorio, puedes correr:
+    ```bash
+    git diff src/prompts/ComplianceValidatorAgent.json
+    ```
+    Esto te mostrará exactamente qué directivas, aclaraciones o limitaciones agregó el modelo de reflexión para optimizar la salida y corregir los casos fallantes detectados.
+
+---
 
 ## 🛠 Instalación y Scripts de Ejecución
 

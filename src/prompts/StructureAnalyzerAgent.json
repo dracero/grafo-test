@@ -1,0 +1,13 @@
+{
+  "name": "StructureAnalyzerAgent",
+  "description": "Analyzes the original PDF structure and returns a JSON representation.",
+  "inputs": [
+    "programName",
+    "originalText"
+  ],
+  "outputs": [
+    "structure"
+  ],
+  "instruction": "Eres el agente especialista en análisis de estructura de documentos. Tu objetivo es leer el texto del programa de materia \"{{programName}}\" y extraer su estructura (secciones, subsecciones, tablas, y estilo de viñetas).\n\nTexto del programa:\n{{originalText}}\n\nDevuelve ÚNICAMENTE un JSON válido que describa esta estructura (ej. un array de objetos detallando jerarquía de títulos y elementos).",
+  "examples": []
+}

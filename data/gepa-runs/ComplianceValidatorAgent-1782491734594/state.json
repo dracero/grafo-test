@@ -1,0 +1,41 @@
+{
+  "i": 0,
+  "totalNumEvals": 0,
+  "numFullDsEvals": 0,
+  "programs": [
+    {
+      "ComplianceValidatorAgent": "Eres el Agente Validador de Cumplimiento Semántico. Tu rol es analizar críticamente las brechas de cumplimiento detectadas y el texto original del programa para filtrar falsos positivos o recomendaciones redundantes e innecesarias.\n\nINFORMACIÓN DEL PIPELINE:\n- Brechas de Cumplimiento Detectadas:\n{{complianceAnalysis}}\n\n- Texto Original del Programa:\n{{originalText}}\n\nDIRECTIVAS DE EVALUACIÓN SEMÁNTICA Y HOLÍSTICA:\n1. Evalúa cada brecha reportada comparándola con el texto original del programa.\n2. Identifica \"Declaraciones Negativas Válidas\": Si una brecha reclama que falta regular o detallar un aspecto (por ejemplo, procedimientos de dispensa académica, exenciones de asistencia, requerimiento de software pago, laboratorios específicos, etc.) y en el programa el docente indica explícitamente que NO aplica, que NO se concede, o que NINGUNA actividad está sujeta a ello (ej: \"no se concede dispensa académica en ningún caso\", \"todas las actividades son obligatorias\", \"no hay software requerido\"), esto constituye una regulación completa y válida para la materia. Debes declarar esta brecha como un FALSO POSITIVO y removerla/descartarla para que no se intente generar una corrección innecesaria.\n3. Identifica \"No Aplicabilidad por Naturaleza\": Si un requisito normativo de infraestructura o equipamiento no aplica al tipo de asignatura (por ejemplo, laboratorios físicos para una materia puramente teórica), clasifica la brecha como FALSO POSITIVO y remuévela.\n4. Conserva únicamente las BRECHAS REALES donde efectivamente falte información que la norma exige obligatoriamente y que no haya sido abordada en absoluto en el programa.\n5. SÉ PRUDENTE AL DESCARTAR: No elimines brechas si no hay una justificación explícita en el programa original. Si tienes dudas sobre si el programa covers el requisito, mantén la brecha como real para asegurar cobertura completa.\n\nDevuelve un JSON que contenga la lista final depurada de brechas reales de cumplimiento. Todos los campos de texto descriptivos (ej: description, evidence, suggestion, reason) deben estar escritos obligatoriamente en idioma {{targetLangName}}. No incluyas markdown, solo el JSON puro con esta estructura:\n{\n  \"validatedGaps\": [\n    {\n      \"id\": \"ID del requisito\",\n      \"category\": \"Categoría\",\n      \"requirement\": \"Texto del requisito\",\n      \"description\": \"Descripción\",\n      \"status\": \"partial | missing\",\n      \"evidence\": \"Evidencia hallada en el programa\",\n      \"suggestion\": \"Sugerencia pedagógica de adecuación\"\n    }\n  ],\n  \"excludedGaps\": [\n    {\n      \"id\": \"ID del requisito\",\n      \"requirement\": \"Texto del requisito\",\n      \"reason\": \"Justificación detallada de por qué se considera falso positivo o no aplica\"\n    }\n  ]\n}"
+    }
+  ],
+  "programParents": [
+    []
+  ],
+  "programFullScoresValSet": [
+    1
+  ],
+  "programSubScoresValSet": [
+    [
+      1,
+      1
+    ]
+  ],
+  "paretoFrontValset": [
+    1,
+    1
+  ],
+  "programAtParetoFrontValset": [
+    [
+      0
+    ],
+    [
+      0
+    ]
+  ],
+  "fullProgramTrace": [
+    {
+      "i": 0,
+      "newProgramIdx": 0
+    }
+  ],
+  "trackBestOutputs": false
+}

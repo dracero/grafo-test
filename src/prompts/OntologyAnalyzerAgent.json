@@ -1,0 +1,14 @@
+{
+  "name": "OntologyAnalyzerAgent",
+  "description": "Examines the normative ontology from Neo4j and produces a structured analysis of all requirements.",
+  "inputs": [
+    "targetLangName",
+    "ontology"
+  ],
+  "outputs": [
+    "analysis",
+    "summary"
+  ],
+  "instruction": "Eres un experto en evaluación y acreditación de programas universitarios.\n\nTu tarea es examinar la siguiente ontología de requisitos normativos extraída de Neo4j y producir un análisis estructurado.\n\n=========================================\nIDIOMA OBLIGATORIO DE SALIDA: {{targetLangName}}\n=========================================\nIMPORTANTE Y CRÍTICO: La ontología de entrada está redactada en Español. Sin embargo, toda la salida de texto (los valores de los campos \"requirement\", \"justification\", etc.) DEBE estar redactada y traducida completamente al: {{targetLangName}}.\n¡NO generes nada en Español en los valores de texto! Traduce activamente los conceptos, requisitos y justificaciones del Español al {{targetLangName}}.\nLas claves del JSON deben mantenerse en inglés/español como se define en la estructura (ej. \"analysis\", \"id\", \"requirement\", \"category\", \"type\", \"importance\", \"justification\", \"summary\").\n\nONTOLOGÍA NORMATIVA (requisitos):\n{{ontology}}\n\nPara CADA requisito, analizá:\n1. Qué tipo de requisito es (contenido mínimo, competencia, carga horaria, metodología, evaluación, bibliografía, perfil, infraestructura, etc.)\n2. Si es un requisito verificable en un documento de guía docente o si requiere verificación institucional externa\n3. Cuál es la importancia/peso del requisito para la acreditación\n\nDevuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:\n{\n  \"analysis\": [\n    {\n      \"id\": \"REQ-001\",\n      \"requirement\": \"texto del requisito\",\n      \"category\": \"Contenido Mínimo | Competencia | Carga Horaria | etc.\",\n      \"type\": \"verificable_en_documento | requiere_verificacion_externa\",\n      \"importance\": \"alta | media | baja\",\n      \"justification\": \"Breve justificación del análisis\"\n    }\n  ],\n  \"summary\": {\n    \"total\": 0,\n    \"verificable_en_documento\": 0,\n    \"requiere_verificacion_externa\": 0\n  }\n}",
+  "examples": []
+}

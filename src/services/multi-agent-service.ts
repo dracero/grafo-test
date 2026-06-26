@@ -2,6 +2,7 @@ import { LlmAgent, SequentialAgent, InMemoryRunner, stringifyContent, isFinalRes
 import { getLlmProvider } from './llm-provider';
 import { KnowledgeGraphBuilderImpl } from './knowledge-graph-builder';
 import { createLogger } from './logger';
+import { PromptLoader } from './prompt-loader';
 
 const logger = createLogger();
 
@@ -33,7 +34,7 @@ export async function* runCorrectionPipeline(
     model,
     outputKey: 'app:normative_analysis',
     instruction: async (context) => {
-      const normDoc = context.state.get<string>('app:normative_doc');
+      const normDoc = context.state.get<string>('app:normative_doc') || normativeName;
       const progDoc = context.state.get<string>('app:program_doc');
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('NormativeOntologyAgent', `Fetching normative ontology (via program doc entities: ${progDoc}) for user: ${email}`);
@@ -42,12 +43,14 @@ export async function* runCorrectionPipeline(
       if (provider === 'groq-fast') {
         ontology = ontology.slice(0, 15);
       }
-      return `Eres el agente especialista en ontología normativa. Tu objetivo es leer y estructurar de forma clara los requisitos y estándares normativos provistos desde la base de datos de Neo4j para el documento normativo "${normDoc}".
       
-      Aquí está la ontología normativa extraída:
-      ${JSON.stringify(ontology, null, 2)}
-      
-      Por favor, genera un análisis estructurado en idioma ${targetLangName} que resuma los requisitos indispensables que debe cumplir cualquier programa de materia según esta norma.`;
+      const sig = PromptLoader.getPrompt('NormativeOntologyAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        normativeName: normDoc,
+        programName: progDoc || '',
+        ontology,
+        targetLangName
+      });
     }
   });
 
@@ -58,7 +61,7 @@ export async function* runCorrectionPipeline(
     outputKey: 'app:program_analysis',
     instruction: async (context) => {
       const normDoc = context.state.get<string>('app:normative_doc');
-      const progDoc = context.state.get<string>('app:program_doc');
+      const progDoc = context.state.get<string>('app:program_doc') || programName;
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ProgramOntologyAgent', `Fetching program ontology (via normative doc OntologyItems: ${normDoc}) for user: ${email}`);
       
@@ -66,12 +69,14 @@ export async function* runCorrectionPipeline(
       if (provider === 'groq-fast') {
         ontology = ontology.slice(0, 15);
       }
-      return `Eres el agente especialista en programas de materias. Tu objetivo es leer y estructurar el contenido actual del programa de materia "${progDoc}" utilizando la información de conceptos y temas cargados en el grafo de Neo4j.
       
-      Aquí están los conceptos y contenidos extraídos de la materia:
-      ${JSON.stringify(ontology, null, 2)}
-      
-      Por favor, resume la estructura actual del programa (objetivos, contenidos principales, metodología, etc.) en idioma ${targetLangName} resaltando cómo está organizado originalmente.`;
+      const sig = PromptLoader.getPrompt('ProgramOntologyAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        normativeName: normDoc || '',
+        programName: progDoc,
+        ontology,
+        targetLangName
+      });
     }
   });
 
@@ -81,7 +86,7 @@ export async function* runCorrectionPipeline(
     model,
     outputKey: 'app:original_structure',
     instruction: async (context) => {
-      const progDoc = context.state.get<string>('app:program_doc');
+      const progDoc = context.state.get<string>('app:program_doc') || programName;
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('StructureAnalyzerAgent', `Analyzing original structure for: ${progDoc} for user: ${email}`);
       
@@ -89,12 +94,12 @@ export async function* runCorrectionPipeline(
       if (provider === 'groq-fast' && originalText.length > 8000) {
         originalText = originalText.substring(0, 8000) + '\n... [Texto truncado para el modelo rápido]';
       }
-      return `Eres el agente especialista en análisis de estructura de documentos. Tu objetivo es leer el texto del programa de materia "${progDoc}" y extraer su estructura (secciones, subsecciones, tablas, y estilo de viñetas).
       
-      Texto del programa:
-      ${originalText}
-      
-      Devuelve ÚNICAMENTE un JSON válido que describa esta estructura (ej. un array de objetos detallando jerarquía de títulos y elementos).`;
+      const sig = PromptLoader.getPrompt('StructureAnalyzerAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        programName: progDoc,
+        originalText
+      });
     }
   });
 
@@ -104,8 +109,8 @@ export async function* runCorrectionPipeline(
     model,
     outputKey: 'app:compliance_analysis',
     instruction: async (context) => {
-      const normDoc = context.state.get<string>('app:normative_doc');
-      const progDoc = context.state.get<string>('app:program_doc');
+      const normDoc = context.state.get<string>('app:normative_doc') || normativeName;
+      const progDoc = context.state.get<string>('app:program_doc') || programName;
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ComplianceGapsAgent', `Fetching compliance gaps between ${progDoc} and ${normDoc} for user: ${email}`);
       
@@ -113,24 +118,14 @@ export async function* runCorrectionPipeline(
       if (provider === 'groq-fast') {
         gaps = gaps.slice(0, 15);
       }
-      return `Eres el agente especialista en análisis de cumplimiento de planes de estudio universitarios. Tu objetivo es consolidar y detallar las brechas de cumplimiento detectadas (requisitos faltantes o parcialmente cubiertos) en el plan de estudios de la carrera "${progDoc}" con respecto a la norma "${normDoc}".
       
-      Aquí están los resultados de cumplimiento parciales o faltantes extraídos de Neo4j:
-      ${JSON.stringify(gaps, null, 2)}
-      
-      Por favor, consolida estas brechas en un informe estructurado escrito en idioma ${targetLangName}.
-      
-      DIRECTIVAS DE ANÁLISIS PEDAGÓGICO (Abstractas):
-      1. Evita proponer la creación de nuevas asignaturas para cubrir competencias transversales o metodológicas (como competencias digitales, ética, comunicación o colaboración). En su lugar, promueve la integración gradual y transversal en asignaturas existentes a lo largo del trayecto formativo.
-      2. Recomienda explícitamente enriquecer los espacios de integración curricular (proyectos iniciales, intermedios y finales/tesis) para incorporar allí la práctica, documentación y evaluación de estas competencias de forma contextualizada.
-      
-      GUÍA DE APLICACIÓN (EJEMPLO REFERENCIAL):
-      - Si se comparara el "Plan de Estudios de Ingeniería en Petróleo" con el "Marco de Competencias Digitales Docentes de la UBA":
-        * En lugar de aislar lo digital en materias como Ciencia de Datos o IA, se deberían enriquecer transversalmente los Proyectos Integradores (Inicial, Intermedio y TIF).
-        * Proyecto Inicial (e.g., Introducción a la Ingeniería): Incorporar herramientas de colaboración digital en red, identidad digital y curación/búsqueda de fuentes de información.
-        * Proyecto Intermedio (e.g., Sustentabilidad): Incorporar el uso ético de datos, la privacidad, bienestar digital y el impacto social de algoritmos y automatización.
-        * Trabajo Integrador Final (TIF): Incorporar la documentación digital avanzada, colaboración virtual, la participación en comunidades de práctica profesional, creación e intercambio de recursos abiertos y derechos de autor/propiedad intelectual.
-      Use este enfoque integrador y transversal para redactar las sugerencias de mejora del plan actual.`;
+      const sig = PromptLoader.getPrompt('ComplianceGapsAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        normativeName: normDoc,
+        programName: progDoc,
+        gaps,
+        targetLangName
+      });
     }
   });
 
@@ -140,8 +135,8 @@ export async function* runCorrectionPipeline(
     model,
     outputKey: 'app:validated_compliance_analysis',
     instruction: async (context) => {
-      const normDoc = context.state.get<string>('app:normative_doc');
-      const progDoc = context.state.get<string>('app:program_doc');
+      const normDoc = context.state.get<string>('app:normative_doc') || normativeName;
+      const progDoc = context.state.get<string>('app:program_doc') || programName;
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ComplianceValidatorAgent', `Validating compliance gaps between ${progDoc} and ${normDoc} for user: ${email}`);
 
@@ -154,43 +149,12 @@ export async function* runCorrectionPipeline(
         complianceAnalysis = complianceAnalysis.substring(0, 3000) + '\n... [Análisis truncado]';
       }
 
-      return `Eres el Agente Validador de Cumplimiento Semántico. Tu rol es analizar críticamente las brechas de cumplimiento detectadas y el texto original del programa para filtrar falsos positivos o recomendaciones redundantes e innecesarias.
-
-INFORMACIÓN DEL PIPELINE:
-- Brechas de Cumplimiento Detectadas:
-${complianceAnalysis}
-
-- Texto Original del Programa:
-${originalText}
-
-DIRECTIVAS DE EVALUACIÓN SEMÁNTICA Y HOLÍSTICA:
-1. Evalúa cada brecha reportada comparándola con el texto original del programa.
-2. Identifica "Declaraciones Negativas Válidas": Si una brecha reclama que falta regular o detallar un aspecto (por ejemplo, procedimientos de dispensa académica, exenciones de asistencia, requerimiento de software pago, laboratorios específicos, etc.) y en el programa el docente indica explícitamente que NO aplica, que NO se concede, o que NINGUNA actividad está sujeta a ello (ej: "no se concede dispensa académica en ningún caso", "todas las actividades son obligatorias", "no hay software requerido"), esto constituye una regulación completa y válida para la materia. Debes declarar esta brecha como un FALSO POSITIVO y removerla/descartarla para que no se intente generar una corrección innecesaria.
-3. Identifica "No Aplicabilidad por Naturaleza": Si un requisito normativo de infraestructura o equipamiento no aplica al tipo de asignatura (por ejemplo, laboratorios físicos para una materia puramente teórica), clasifica la brecha como FALSO POSITIVO y remuévela.
-4. Conserva únicamente las BRECHAS REALES donde efectivamente falte información que la norma exige obligatoriamente y que no haya sido abordada en absoluto en el programa.
-5. SÉ PRUDENTE AL DESCARTAR: No elimines brechas si no hay una justificación explícita en el programa original. Si tienes dudas sobre si el programa covers el requisito, mantén la brecha como real para asegurar cobertura completa.
-
-Devuelve un JSON que contenga la lista final depurada de brechas reales de cumplimiento. Todos los campos de texto descriptivos (ej: description, evidence, suggestion, reason) deben estar escritos obligatoriamente en idioma ${targetLangName}. No incluyas markdown, solo el JSON puro con esta estructura:
-{
-  "validatedGaps": [
-    {
-      "id": "ID del requisito",
-      "category": "Categoría",
-      "requirement": "Texto del requisito",
-      "description": "Descripción",
-      "status": "partial | missing",
-      "evidence": "Evidencia hallada en el programa",
-      "suggestion": "Sugerencia pedagógica de adecuación"
-    }
-  ],
-  "excludedGaps": [
-    {
-      "id": "ID del requisito",
-      "requirement": "Texto del requisito",
-      "reason": "Justificación detallada de por qué se considera falso positivo o no aplica"
-    }
-  ]
-}`;
+      const sig = PromptLoader.getPrompt('ComplianceValidatorAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        complianceAnalysis,
+        originalText,
+        targetLangName
+      });
     }
   });
 
@@ -200,7 +164,7 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
     model,
     outputKey: 'app:corrected_program',
     instruction: async (context) => {
-      const progDoc = context.state.get<string>('app:program_doc');
+      const progDoc = context.state.get<string>('app:program_doc') || programName;
       const email = context.state.get<string>('app:user_email') || '';
       logger.info('ProgramFixerAgent', `Fetching original text for program doc: ${progDoc} for user: ${email}`);
       
@@ -239,70 +203,15 @@ Devuelve un JSON que contenga la lista final depurada de brechas reales de cumpl
         logger.warn('ProgramFixerAgent', 'Could not parse validatedGaps count from compliance analysis', err as Error);
       }
       
-      return `Eres el agente especialista en adecuación curricular de planes de estudio universitarios. Tu tarea es generar un listado ESTRUCTURADO de correcciones que deben aplicarse al programa de estudios original para cubrir únicamente las brechas normativas REALES y VALIDADAS.
-
-      IMPORTANTE: NO reescribas el documento completo. El documento original se preservará tal cual está. Solo necesitás listar las correcciones puntuales.
-      
-      INFORMACIÓN DEL PIPELINE:
-      - Análisis de Requisitos Normativos:
-      ${normativeAnalysis}
-      
-      - Brechas de Cumplimiento Validadas (¡SOLO debes corregir estas!):
-      ${validatedComplianceAnalysis}
-      
-      - Estructura Original Detectada (JSON):
-      ${originalStructure}
-      
-      TEXTO ORIGINAL DEL PROGRAMA (referencia):
-      ${originalText}
-      
-      ⚠️ OBLIGACIÓN CRÍTICA DE COBERTURA EXHAUSTIVA DE BRECHAS:
-      - Las "Brechas de Cumplimiento Validadas" contienen un array "validatedGaps" con ${validatedGapsCount} no conformidades detectadas.
-      - Debes revisar CADA UNA de las ${validatedGapsCount} brechas en el array "validatedGaps".
-      - IMPORTANTE: Las brechas pueden tener status "missing" (faltante completo) o "partial" (parcialmente cubierto). Ambos tipos REQUIEREN corrección y DEBEN incluirse en tu respuesta.
-      - Para CADA brecha validada (tanto "partial" como "missing"), debes generar EXACTAMENTE UNA corrección independiente en el array "corrections".
-      - Las brechas "partial" son tan importantes como las "missing" - indican que el programa menciona el tema pero no lo desarrolla suficientemente según la normativa.
-      - NO agrupes múltiples brechas en una sola corrección genérica.
-      - NO resumas ni omitas ninguna brecha, especialmente las "partial".
-      - El array "corrections" de tu respuesta DEBE contener exactamente ${validatedGapsCount} elementos (uno por brecha validada).
-      - Si hay ${validatedGapsCount} brechas validadas, debe haber exactamente ${validatedGapsCount} correcciones en el array resultante.
-      - Esto es OBLIGATORIO para asegurar que todas las no conformidades aparezcan de forma explícita y separada en el anexo de correcciones del documento PDF final.
-      
-      INSTRUCCIONES DE IDIOMA Y FORMATO DE SALIDA:
-      - Todos los campos de texto descriptivos y propuestas de adecuación ("justification", "correctedText") deben estar redactados obligatoriamente en idioma ${targetLangName}.
-      - Devolvé ÚNICAMENTE un JSON válido con la siguiente estructura. No incluyas markdown, solo el JSON puro:
-
-      {"corrections": [
-        {
-          "section": "Nombre exacto de la sección del documento original donde aplicar la corrección (ej: 'Objetivos', 'Contenidos Mínimos', 'Metodología de Enseñanza')",
-          "action": "agregar | modificar | enriquecer",
-          "justification": "Explicación breve de por qué es necesaria esta corrección según la normativa, citando el ID de la brecha validada y su status (partial o missing)",
-          "correctedText": "El texto completo que debe incorporarse o reemplazar al existente en esa sección",
-          "priority": "alta | media | baja",
-          "gapId": "ID de la brecha validada que esta corrección resuelve (para trazabilidad)",
-          "status": "partial | missing (copiado del validatedGap correspondiente)"
-        }
-      ]}
-      
-      EJEMPLO DE CÓMO MANEJAR BRECHAS PARCIALES:
-      Si una brecha tiene status "partial" con evidence: "Se menciona metodología activa pero no se detallan actividades específicas", 
-      tu corrección debe usar action: "enriquecer" y proporcionar el texto que COMPLETA lo que ya existe.
-      
-      Si una brecha tiene status "missing", usa action: "agregar" y proporciona el texto completo que debe agregarse.
-      
-      DIRECTIVAS DE INTEGRACIÓN PEDAGÓGICA:
-      - Integrá transversalmente las competencias faltantes en asignaturas y proyectos existentes.
-      - Evitá proponer nuevas asignaturas obligatorias.
-      - Enriquecé los espacios de integración curricular existentes (proyectos integradores, trabajos finales).
-      - Cada corrección debe ser autónoma y aplicable directamente sobre el documento original.
-      - Si no hay brechas reales en validatedComplianceAnalysis (es decir, validatedGaps está vacío), devuelve un array "corrections" vacío: {"corrections": []}. NO inventes correcciones si no hay brechas reales validadas.
-      
-      ⚠️ VERIFICACIÓN FINAL ANTES DE RESPONDER:
-      - Cuenta cuántos elementos hay en tu array "corrections" antes de devolver la respuesta.
-      - Verifica que el número coincida exactamente con el número de elementos en "validatedGaps" (${validatedGapsCount}).
-      - Si no coinciden, revisa qué brechas olvidaste y agrégalas.
-      
-      Generá únicamente el JSON de correcciones.`;
+      const sig = PromptLoader.getPrompt('ProgramFixerAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        normativeAnalysis,
+        validatedComplianceAnalysis,
+        originalStructure,
+        originalText,
+        validatedGapsCount,
+        targetLangName
+      });
     }
   });
 

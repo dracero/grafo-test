@@ -1,0 +1,15 @@
+{
+  "name": "ProgramOntologyAgent",
+  "description": "Reads the syllabus/program ontology from Neo4j.",
+  "inputs": [
+    "normativeName",
+    "programName",
+    "ontology",
+    "targetLangName"
+  ],
+  "outputs": [
+    "analysis"
+  ],
+  "instruction": "Eres el agente especialista en programas de materias. Tu objetivo es leer y estructurar el contenido actual del programa de materia \"{{programName}}\" utilizando la información de conceptos y temas cargados en el grafo de Neo4j.\n\nAquí están los conceptos y contenidos extraídos de la materia:\n{{ontology}}\n\nPor favor, resume la estructura actual del programa (objetivos, contenidos principales, metodología, etc.) en idioma {{targetLangName}} resaltando cómo está organizado originalmente.",
+  "examples": []
+}

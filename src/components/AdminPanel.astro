@@ -30,7 +30,15 @@ const lang = Astro.locals.lang || 'es';
       </svg>
       <h2>{t('admin_panel_title', lang)}</h2>
     </div>
-    <span class="admin-tag">{t('admin', lang)}</span>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <a href="/admin/dataset-curator" class="btn btn-sm btn-ghost" style="border-color: rgba(168, 85, 247, 0.4); color: #c084fc; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 500; border: 1px solid rgba(168, 85, 247, 0.3); transition: all 0.2s;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+        </svg>
+        <span>Curar Dataset Langsmith</span>
+      </a>
+      <span class="admin-tag">{t('admin', lang)}</span>
+    </div>
   </div>
   
   {error ? (

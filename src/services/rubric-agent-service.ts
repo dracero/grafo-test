@@ -21,6 +21,7 @@ import { LlmAgent, SequentialAgent, InMemoryRunner, stringifyContent, isFinalRes
 import { getLlmProvider } from './llm-provider';
 import { KnowledgeGraphBuilderImpl } from './knowledge-graph-builder';
 import { createLogger } from './logger';
+import { PromptLoader } from './prompt-loader';
 
 const logger = createLogger();
 
@@ -73,47 +74,14 @@ export async function* runRubricPipeline(
 
       const ontology = await graphBuilder.getNormativeOntology(normDoc, userEmail);
 
-      return `Eres un experto en evaluación y acreditación de programas universitarios.
-
-Tu tarea es examinar la siguiente ontología de requisitos normativos extraída de Neo4j y producir un análisis estructurado.
-
-=========================================
-IDIOMA OBLIGATORIO DE SALIDA: ${targetLangName}
-=========================================
-IMPORTANTE Y CRÍTICO: La ontología de entrada está redactada en Español. Sin embargo, toda la salida de texto (los valores de los campos "requirement", "justification", etc.) DEBE estar redactada y traducida completamente al: ${targetLangName}. 
-¡NO generes nada en Español en los valores de texto! Traduce activamente los conceptos, requisitos y justificaciones del Español al ${targetLangName}.
-Las claves del JSON deben mantenerse en inglés/español como se define en la estructura (ej. "analysis", "id", "requirement", "category", "type", "importance", "justification", "summary").
-
-ONTOLOGÍA NORMATIVA (${ontology.length} requisitos):
-${JSON.stringify(ontology, null, 2)}
-
-Para CADA requisito, analizá:
-1. Qué tipo de requisito es (contenido mínimo, competencia, carga horaria, metodología, evaluación, bibliografía, perfil, infraestructura, etc.)
-2. Si es un requisito verificable en un documento de guía docente o si requiere verificación institucional externa
-3. Cuál es la importancia/peso del requisito para la acreditación
-
-Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
-{
-  "analysis": [
-    {
-      "id": "REQ-001",
-      "requirement": "texto del requisito",
-      "category": "Contenido Mínimo | Competencia | Carga Horaria | etc.",
-      "type": "verificable_en_documento | requiere_verificacion_externa",
-      "importance": "alta | media | baja",
-      "justification": "Breve justificación del análisis"
-    }
-  ],
-  "summary": {
-    "total": <count>,
-    "verificable_en_documento": <count>,
-    "requiere_verificacion_externa": <count>
-  }
-}`;
+      const sig = PromptLoader.getPrompt('OntologyAnalyzerAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        targetLangName,
+        ontology
+      });
     },
   });
 
-  // ── Agent 2: Schema-Ontology Adjuster ───────────────────────────────────
   const schemaAdjuster = new LlmAgent({
     name: 'SchemaOntologyAdjusterAgent',
     description: 'Adjusts the normative ontology using the evaluation schema to determine what aspects to include in the rubric.',
@@ -127,76 +95,16 @@ Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
       const ontology = await graphBuilder.getNormativeOntology(normDoc, userEmail);
       const ontologyAnalysis = context.state.get<string>('app:ontology_analysis') || '';
 
-      return `Eres un experto en diseño curricular, evaluación educativa y acreditación universitaria.
-
-Tenés disponible:
-1. El ANÁLISIS DE ONTOLOGÍA del agente anterior (análisis de requisitos normativos)
-2. La ONTOLOGÍA NORMATIVA completa extraída de Neo4j
-3. El ESQUEMA DE EVALUACIÓN (aspectos que la rúbrica debe cubrir, extraídos de un documento de estructura)
-
-Tu tarea es AJUSTAR la ontología normativa usando ambos documentos para preparar la rúbrica:
-
-=========================================
-IDIOMA OBLIGATORIO DE SALIDA: ${targetLangName}
-=========================================
-IMPORTANTE Y CRÍTICO: La ontología y el esquema de evaluación de entrada están en Español. Tu tarea requiere que toda la salida de texto (los valores de los campos "aspect", "description", "category", "verificationMethod", "reason", "requirement", etc.) DEBE estar redactada y traducida completamente al: ${targetLangName}.
-¡NO utilices Español en los valores de texto! Traduce activamente los nombres de aspectos, las descripciones, las categorías y los motivos del Español al ${targetLangName}.
-Las claves del JSON deben mantenerse exactamente como se especifica (ej. "rubricAspects", "schemaAspectId", "aspect", "description", "category", "normativeRequirements", "verificationMethod", "normativeWithoutSchema", "id", "requirement", "reason", "nonEvaluableAspects").
-
-A. Cruzar cada aspecto del esquema de evaluación con los requisitos normativos para encontrar la concordancia:
-   - Para cada aspecto del esquema, identificar qué requisitos normativos lo sustentan
-   - Para cada requisito normativo, identificar si está cubierto por algún aspecto del esquema
-
-B. Clasificar el resultado en:
-   - **Aspectos a incluir en la rúbrica**: Aspectos del esquema de evaluación que tienen respaldo normativo (con sus requisitos normativos asociados)
-   - **Aspectos normativos sin esquema**: Requisitos normativos que NO aparecen en el esquema de evaluación (estos NO se incluyen en la rúbrica pero se reportan como observaciones)
-   - **Aspectos no evaluables**: Requisitos normativos que requieren verificación institucional y no se pueden evaluar desde un documento
-
-C. Para cada aspecto a incluir en la rúbrica, definir:
-   - Qué se evalúa concretamente
-   - Qué requisitos normativos lo fundamentan
-   - Cómo se verifica
-
-ANÁLISIS DE ONTOLOGÍA (del agente anterior):
-${ontologyAnalysis}
-
-ONTOLOGÍA NORMATIVA COMPLETA (${ontology.length} requisitos):
-${JSON.stringify(ontology, null, 2)}
-
-ESQUEMA DE EVALUACIÓN (${evaluationSchema.length} aspectos — fuente de verdad para la rúbrica):
-${JSON.stringify(evaluationSchema, null, 2)}
-
-Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
-{
-  "rubricAspects": [
-    {
-      "schemaAspectId": "ID del aspecto del esquema",
-      "aspect": "nombre del aspecto a evaluar",
-      "description": "descripción detallada de qué se evalúa",
-      "category": "dimensión/categoría temática",
-      "normativeRequirements": ["IDs de requisitos normativos que lo sustentan"],
-      "verificationMethod": "cómo se verifica este aspecto en un documento"
-    }
-  ],
-  "normativeWithoutSchema": [
-    {
-      "id": "REQ-xxx",
-      "requirement": "requisito normativo sin esquema",
-      "reason": "por qué no está en el esquema o no aplica"
-    }
-  ],
-  "nonEvaluableAspects": [
-    {
-      "id": "REQ-xxx",
-      "requirement": "requisito no evaluable",
-      "reason": "por qué requiere verificación externa"
-    }
-  ]
-}`;
+      const sig = PromptLoader.getPrompt('SchemaOntologyAdjusterAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        targetLangName,
+        ontologyAnalysis,
+        ontology,
+        evaluationSchema
+      });
     },
   });
 
-  // ── Agent 3: Rubric Synthesizer ─────────────────────────────────────────
   const rubricSynthesizer = new LlmAgent({
     name: 'RubricSynthesizerAgent',
     description: 'Synthesizes the final rubric from the adjusted ontology, covering only schema aspects.',
@@ -209,65 +117,13 @@ Devuelve un JSON con esta estructura. No incluyas markdown, solo el JSON puro:
 
       logger.info('RubricSynthesizerAgent', `Synthesizing rubric. Schema has ${evaluationSchema.length} aspects.`);
 
-      return `Eres un experto en diseño curricular, evaluación educativa, acreditación universitaria y auditoría de programas.
-
-Tu tarea es generar la RÚBRICA INTEGRAL DE EVALUACIÓN final, usando la ontología ajustada del agente anterior.
-
-REGLAS ESTRICTAS:
-1. La rúbrica debe cubrir EXCLUSIVAMENTE los aspectos que el agente anterior definió en "rubricAspects" (que vienen del esquema de evaluación).
-2. Cada criterio debe estar fundamentado en los requisitos normativos identificados — referencialos.
-3. Los aspectos "normativeWithoutSchema" y "nonEvaluableAspects" NO van en la rúbrica, van como observaciones aparte.
-4. Los descriptores de cada nivel deben ser CONCRETOS y ESPECÍFICOS, describiendo exactamente qué evidencia buscar.
-
-=========================================
-IDIOMA OBLIGATORIO DE SALIDA: ${targetLangName}
-=========================================
-IMPORTANTE Y CRÍTICO: Todos los datos de entrada provistos por los agentes anteriores están en Español o mezclados. Tu salida final (los valores de los campos "title", "subtitle", "dimension", "criterion", "description", descriptores de niveles de cumplimiento en "levels: full, partial, none", observaciones en "nonEvaluableObservations", etc.) DEBE estar redactada y traducida COMPLETAMENTE al: ${targetLangName}.
-¡BAJO NINGUNA CIRCUNSTANCIA generes textos de valores en Español! Traduce activamente los títulos, dimensiones, criterios, descripciones, observaciones y especialmente los descriptores de nivel del Español al ${targetLangName}.
-Las claves del JSON deben mantenerse exactamente en inglés.
-
-NIVELES DE CUMPLIMIENTO (exactamente 3):
-Define los descriptores de nivel para cada criterio traduciendo al ${targetLangName}:
-- "full": Descriptor detallado en ${targetLangName} para Cumplimiento Total / Óptimo.
-- "partial": Descriptor detallado en ${targetLangName} para Cumplimiento Parcial / Aceptable con observación.
-- "none": Descriptor detallado en ${targetLangName} para Incumplimiento / Deficiente / Crítico.
-
-ANÁLISIS DE ONTOLOGÍA (Agente 1):
-${ontologyAnalysis}
-
-ONTOLOGÍA AJUSTADA CON ESQUEMA (Agente 2):
-${adjustedOntology}
-
-ESQUEMA DE EVALUACIÓN ORIGINAL (${evaluationSchema.length} aspectos — referencia):
-${JSON.stringify(evaluationSchema, null, 2)}
-
-Devuelve un JSON con esta estructura exacta. No incluyas markdown, solo el JSON puro:
-{
-  "title": "Rúbrica Integral para la Auditoría y Revisión de Guías Docentes",
-  "subtitle": "EVALUACIÓN DE CUMPLIMIENTO — Generada por Sistema Multi-Agente",
-  "criteria": [
-    {
-      "id": "1.1",
-      "dimension": "Nombre de la dimensión temática",
-      "criterion": "Nombre del componente evaluado (del esquema de evaluación)",
-      "description": "Criterio de calidad institucional detallado — referenciar la normativa",
-      "schemaAspectId": "ID del aspecto del esquema que cubre este criterio",
-      "normativeRefs": ["IDs de requisitos normativos relacionados"],
-      "levels": {
-        "full": "Descriptor detallado de cumplimiento total con evidencias específicas",
-        "partial": "Descriptor de cumplimiento parcial con deficiencias detectables",
-        "none": "Descriptor de incumplimiento con falencias críticas"
-      }
-    }
-  ],
-  "nonEvaluableObservations": [
-    {
-      "aspect": "Aspecto normativo no incluido en la rúbrica",
-      "reason": "Justificación (no está en el esquema o requiere verificación externa)",
-      "recommendation": "Sugerencia de cómo verificarlo fuera de la rúbrica"
-    }
-  ]
-}`;
+      const sig = PromptLoader.getPrompt('RubricSynthesizerAgent');
+      return PromptLoader.interpolate(sig.instruction, {
+        targetLangName,
+        ontologyAnalysis,
+        adjustedOntology,
+        evaluationSchema
+      });
     },
   });
 

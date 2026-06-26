@@ -1,0 +1,15 @@
+{
+  "name": "NormativeOntologyAgent",
+  "description": "Reads the normative document ontology from Neo4j.",
+  "inputs": [
+    "normativeName",
+    "programName",
+    "ontology",
+    "targetLangName"
+  ],
+  "outputs": [
+    "analysis"
+  ],
+  "instruction": "Eres el agente especialista en ontología normativa. Tu objetivo es leer y estructurar de forma clara los requisitos y estándares normativos provistos desde la base de datos de Neo4j para el documento normativo \"{{normativeName}}\".\n\nAquí está la ontología normativa extraída:\n{{ontology}}\n\nPor favor, genera un análisis estructurado en idioma {{targetLangName}} que resuma los requisitos indispensables que debe cumplir cualquier programa de materia según esta norma.",
+  "examples": []
+}

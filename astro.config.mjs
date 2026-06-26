@@ -1,6 +1,10 @@
 import { defineConfig } from 'astro/config';
 import vercel from '@astrojs/vercel';
 import node from '@astrojs/node';
+import dotenv from 'dotenv';
+
+// Load .env file explicitly
+dotenv.config();
 
 const isVercel = process.env.VERCEL === '1';
 

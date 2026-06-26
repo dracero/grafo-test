@@ -731,11 +731,28 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   async getNormativeOntology(normativeName: string, userEmail: string): Promise<any[]> {
     this.ensureConnected();
     return this.executeRead(async (session) => {
-      const result = await session.run(`
+      let result = await session.run(`
         MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(d:NormativeDocument {name: $normativeName})<-[:EXTRACTED_FROM]-(o:OntologyItem)
         RETURN o.id AS id, o.category AS category, o.requirement AS requirement, o.description AS description, o.keywords AS keywords
         ORDER BY o.id
       `, { normativeName, userEmail });
+      
+      if (result.records.length > 0) {
+        return result.records.map(record => ({
+          id: record.get('id'),
+          category: record.get('category'),
+          requirement: record.get('requirement'),
+          description: record.get('description'),
+          keywords: record.get('keywords') || []
+        }));
+      }
+
+      // Fallback: match globally
+      result = await session.run(`
+        MATCH (d:NormativeDocument {name: $normativeName})<-[:EXTRACTED_FROM]-(o:OntologyItem)
+        RETURN o.id AS id, o.category AS category, o.requirement AS requirement, o.description AS description, o.keywords AS keywords
+        ORDER BY o.id
+      `, { normativeName });
       return result.records.map(record => ({
         id: record.get('id'),
         category: record.get('category'),
@@ -749,13 +766,30 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   async getProgramOntology(programName: string, userEmail: string): Promise<any[]> {
     this.ensureConnected();
     return this.executeRead(async (session) => {
-      const result = await session.run(`
+      let result = await session.run(`
         MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(p:ProgramDocument {name: $programName})
         WITH p
         MATCH (e:Entity)
         WHERE p.name IN e.documents AND e.type <> 'DOCUMENT' AND NOT e:OntologyItem
         RETURN e.name AS name, e.type AS type, e.sourceText AS sourceText
       `, { programName, userEmail });
+      
+      if (result.records.length > 0) {
+        return result.records.map(record => ({
+          name: record.get('name'),
+          type: record.get('type'),
+          sourceText: record.get('sourceText')
+        }));
+      }
+
+      // Fallback: match globally
+      result = await session.run(`
+        MATCH (p:ProgramDocument {name: $programName})
+        WITH p
+        MATCH (e:Entity)
+        WHERE p.name IN e.documents AND e.type <> 'DOCUMENT' AND NOT e:OntologyItem
+        RETURN e.name AS name, e.type AS type, e.sourceText AS sourceText
+      `, { programName });
       return result.records.map(record => ({
         name: record.get('name'),
         type: record.get('type'),
@@ -767,11 +801,30 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   async getComplianceGaps(normativeName: string, programName: string, userEmail: string): Promise<any[]> {
     this.ensureConnected();
     return this.executeRead(async (session) => {
-      const result = await session.run(`
+      let result = await session.run(`
         MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(p:ProgramDocument {name: $programName})-[r:EVALUATED_AGAINST]->(o:OntologyItem)
         WHERE r.status IN ['partial', 'missing'] AND (u)-[:OWNED_BY]->(:NormativeDocument)-[:EXTRACTED_FROM]-(o)
         RETURN o.id AS id, o.category AS category, o.requirement AS requirement, o.description AS description, r.status AS status, r.evidence AS evidence, r.suggestion AS suggestion
       `, { programName, userEmail });
+      
+      if (result.records.length > 0) {
+        return result.records.map(record => ({
+          id: record.get('id'),
+          category: record.get('category'),
+          requirement: record.get('requirement'),
+          description: record.get('description'),
+          status: record.get('status'),
+          evidence: record.get('evidence'),
+          suggestion: record.get('suggestion')
+        }));
+      }
+
+      // Fallback: match globally
+      result = await session.run(`
+        MATCH (p:ProgramDocument {name: $programName})-[r:EVALUATED_AGAINST]->(o:OntologyItem)
+        WHERE r.status IN ['partial', 'missing']
+        RETURN o.id AS id, o.category AS category, o.requirement AS requirement, o.description AS description, r.status AS status, r.evidence AS evidence, r.suggestion AS suggestion
+      `, { programName });
       return result.records.map(record => ({
         id: record.get('id'),
         category: record.get('category'),
@@ -787,10 +840,21 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   async getProgramText(programName: string, userEmail: string): Promise<string> {
     this.ensureConnected();
     return this.executeRead(async (session) => {
-      const result = await session.run(`
+      let result = await session.run(`
         MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(p:ProgramDocument {name: $programName})
         RETURN p.text AS text
       `, { programName, userEmail });
+      
+      if (result.records.length > 0) {
+        return result.records[0].get('text') || '';
+      }
+
+      // Fallback: match globally
+      result = await session.run(`
+        MATCH (p:ProgramDocument {name: $programName})
+        RETURN p.text AS text
+        LIMIT 1
+      `, { programName });
       return result.records[0]?.get('text') || '';
     });
   }
@@ -982,11 +1046,27 @@ export class KnowledgeGraphBuilderImpl implements KnowledgeGraphBuilder {
   async getEvaluationSchema(userEmail: string): Promise<Array<{ id: string; aspect: string; description: string; category: string }>> {
     this.ensureConnected();
     return this.executeRead(async (session) => {
-      const result = await session.run(`
+      let result = await session.run(`
         MATCH (u:User {email: $userEmail})-[:OWNED_BY]->(ea:EvaluableAspect)
         RETURN ea.aspectId AS id, ea.aspect AS aspect, ea.description AS description, ea.category AS category
         ORDER BY ea.aspectId
       `, { userEmail });
+      
+      if (result.records.length > 0) {
+        return result.records.map(r => ({
+          id: r.get('id'),
+          aspect: r.get('aspect'),
+          description: r.get('description'),
+          category: r.get('category'),
+        }));
+      }
+
+      // Fallback: match globally
+      result = await session.run(`
+        MATCH (ea:EvaluableAspect)
+        RETURN ea.aspectId AS id, ea.aspect AS aspect, ea.description AS description, ea.category AS category
+        ORDER BY ea.aspectId
+      `);
       return result.records.map(r => ({
         id: r.get('id'),
         aspect: r.get('aspect'),
