@@ -189,6 +189,7 @@ function renderResults(report) {
   const hasGaps = s.partial > 0 || s.missing > 0;
   document.getElementById('btn-fix').style.display = hasGaps ? 'block' : 'none';
   document.getElementById('btn-download-non-compliance').style.display = hasGaps ? 'block' : 'none';
+  document.getElementById('btn-download-full-report').style.display = 'block';
 
   document.getElementById('summary-grid').innerHTML = `
     <div class="summary-card"><div class="value value-total">${s.total}</div><div class="label">${t('total_requirements', 'Total Requisitos')}</div></div>
@@ -302,6 +303,9 @@ document.getElementById('btn-close-modal').addEventListener('click', () => {
 });
 document.getElementById('btn-download-non-compliance').addEventListener('click', () => {
   window.open('/api/compare/non-compliance-pdf', '_blank');
+});
+document.getElementById('btn-download-full-report').addEventListener('click', () => {
+  window.open('/api/compare/full-report-pdf', '_blank');
 });
 
 async function runFixPipeline() {

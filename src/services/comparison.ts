@@ -104,9 +104,28 @@ function extractCompleteObjects(text: string): any[] {
   const objects: any[] = [];
   let depth = 0;
   let start = -1;
+  let inString = false;
+  let escapeNext = false;
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+
+    // Handle escape sequences inside strings
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escapeNext = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    // Skip everything inside strings
+    if (inString) continue;
+
     if (ch === '{') {
       if (depth === 0) start = i;
       depth++;
@@ -153,16 +172,26 @@ function parseOntologyResponse(raw: string): OntologyItem[] {
 }
 
 function isValidOntologyItem(obj: any): boolean {
-  return obj && typeof obj.id === 'string' && typeof obj.requirement === 'string';
+  if (!obj || typeof obj !== 'object') return false;
+  // Accept various field names the LLM might use for the ID
+  const hasId = typeof obj.id === 'string' || typeof obj.itemId === 'string' || typeof obj.item_id === 'string' || typeof obj.reqId === 'string';
+  // Accept various field names for the requirement/content text
+  const hasReq = typeof obj.requirement === 'string' || typeof obj.name === 'string' ||
+    typeof obj.title === 'string' || typeof obj.content === 'string' ||
+    typeof obj.topic === 'string' || typeof obj.tema === 'string' ||
+    typeof obj.requisito === 'string' || typeof obj.description === 'string';
+  return hasId && hasReq;
 }
 
 function normalizeOntologyItem(obj: any): OntologyItem {
+  const id = String(obj.id ?? obj.itemId ?? obj.item_id ?? obj.reqId ?? '');
+  const requirement = String(obj.requirement ?? obj.name ?? obj.title ?? obj.content ?? obj.topic ?? obj.tema ?? obj.requisito ?? obj.description ?? '');
   return {
-    id:          String(obj.id ?? ''),
-    category:    String(obj.category ?? 'General'),
-    requirement: String(obj.requirement ?? ''),
-    description: String(obj.description ?? obj.requirement ?? ''),
-    keywords:    Array.isArray(obj.keywords) ? obj.keywords.map(String) : [],
+    id,
+    category:    String(obj.category ?? obj.categoria ?? obj.type ?? obj.tipo ?? 'General'),
+    requirement,
+    description: String(obj.description ?? obj.descripcion ?? requirement ?? ''),
+    keywords:    Array.isArray(obj.keywords) ? obj.keywords.map(String) : (Array.isArray(obj.palabras_clave) ? obj.palabras_clave.map(String) : []),
   };
 }
 
@@ -477,13 +506,45 @@ ${safeText}`;
     );
 
     const rawText = response.text ?? '';
-    const items = parseOntologyResponse(rawText);
+    let items = parseOntologyResponse(rawText);
 
     if (items.length === 0) {
-      throw new Error('No se pudo extraer ningún ítem de la ontología normativa');
-    }
+      // Log the raw response for debugging before retrying
+      logger.warn('Comparison', `extractOntology: primera respuesta del LLM no produjo ítems válidos. Raw response (primeros 1000 chars): ${rawText.substring(0, 1000)}`);
+      logger.info('Comparison', `extractOntology: reintentando con prompt reforzado...`);
 
-    logger.info('Comparison', `✅ Ontología normativa extraída: ${items.length} elementos`);
+      // Retry with a more explicit prompt
+      const retryPrompt = `INSTRUCCIÓN CRÍTICA: Debes responder ÚNICAMENTE con un JSON válido. No incluyas explicaciones, comentarios ni markdown.
+
+Devuelve un array JSON con la siguiente estructura EXACTA:
+[{"id": "REQ-001", "category": "Contenido Mínimo", "requirement": "texto del requisito", "description": "descripción", "keywords": ["kw1"]}]
+
+Analiza el siguiente documento normativo y extrae TODOS los requisitos:
+
+${safeText}`;
+
+      const retryResponse = await this.generateWithRetry(
+        {
+          model: isGroq ? 'groq/llama-3.3-70b-versatile' : (isGroqFast ? 'groq/llama-3.1-8b-instant' : MODEL_FLASH),
+          prompt: retryPrompt,
+          output: { format: 'text' },
+          config: { maxOutputTokens: maxTokens },
+        },
+        'extractOntology_retry',
+        provider
+      );
+
+      const retryRawText = retryResponse.text ?? '';
+      items = parseOntologyResponse(retryRawText);
+
+      if (items.length === 0) {
+        logger.error('Comparison', `extractOntology: segundo intento también falló. Raw retry response (primeros 1000 chars): ${retryRawText.substring(0, 1000)}`, new Error('Ontology extraction failed after retry'));
+        throw new Error('No se pudo extraer ningún ítem de la ontología normativa (incluso tras reintentar con prompt reforzado)');
+      }
+      logger.info('Comparison', `✅ Ontología normativa extraída en segundo intento: ${items.length} elementos`);
+    } else {
+      logger.info('Comparison', `✅ Ontología normativa extraída: ${items.length} elementos`);
+    }
     return items;
   }
 
@@ -534,19 +595,51 @@ ${safeText}`;
     );
 
     const rawText = response.text ?? '';
-    const items = parseOntologyResponse(rawText);
+    let items = parseOntologyResponse(rawText);
 
     if (items.length === 0) {
-      throw new Error('No se pudo extraer ningún ítem de la ontología del programa');
-    }
+      // Log the raw response for debugging before retrying
+      logger.warn('Comparison', `extractProgramOntology: primera respuesta del LLM no produjo ítems válidos. Raw response (primeros 1000 chars): ${rawText.substring(0, 1000)}`);
+      logger.info('Comparison', `extractProgramOntology: reintentando con prompt reforzado...`);
 
-    logger.info('Comparison', `✅ Ontología del programa extraída: ${items.length} elementos`);
+      // Retry with a more explicit prompt
+      const retryPrompt = `INSTRUCCIÓN CRÍTICA: Debes responder ÚNICAMENTE con un JSON válido. No incluyas explicaciones, comentarios ni markdown.
+
+Devuelve un array JSON con la siguiente estructura EXACTA:
+[{"id": "PROG-001", "category": "Contenido", "requirement": "nombre de la sección", "description": "descripción", "keywords": ["kw1"]}]
+
+Analiza el siguiente programa de materia y extrae las secciones principales (unidades, objetivos, metodología, evaluación, bibliografía). Máximo 35 ítems.
+
+${safeText}`;
+
+      const retryResponse = await this.generateWithRetry(
+        {
+          model: isGroq ? 'groq/llama-3.3-70b-versatile' : (isGroqFast ? 'groq/llama-3.1-8b-instant' : MODEL_FLASH),
+          prompt: retryPrompt,
+          output: { format: 'text' },
+          config: { maxOutputTokens: maxTokens },
+        },
+        'extractProgramOntology_retry',
+        provider
+      );
+
+      const retryRawText = retryResponse.text ?? '';
+      items = parseOntologyResponse(retryRawText);
+
+      if (items.length === 0) {
+        logger.error('Comparison', `extractProgramOntology: segundo intento también falló. Raw retry response (primeros 1000 chars): ${retryRawText.substring(0, 1000)}`, new Error('Program ontology extraction failed after retry'));
+        throw new Error('No se pudo extraer ningún ítem de la ontología del programa (incluso tras reintentar con prompt reforzado)');
+      }
+      logger.info('Comparison', `✅ Ontología del programa extraída en segundo intento: ${items.length} elementos`);
+    } else {
+      logger.info('Comparison', `✅ Ontología del programa extraída: ${items.length} elementos`);
+    }
     return items;
   }
 
   async compareOntologies(
-    programOntology: OntologyItem[],
     normativeOntology: OntologyItem[],
+    programOntology: OntologyItem[],
     provider?: string
   ): Promise<ComparisonResult[]> {
     const normProvider = (provider || '').toLowerCase().trim();
@@ -555,62 +648,67 @@ ${safeText}`;
     const providerLabel = isGroq ? 'Groq Llama 3.3' : (isGroqFast ? 'Groq Llama 3.1' : 'Gemini 2.5 Flash');
     logger.info(
       'Comparison',
-      `Comparando holísticamente en lotes con ${providerLabel}: ${programOntology.length} ítems de programa vs ${normativeOntology.length} normativos…`
+      `Comparando holísticamente en lotes con ${providerLabel}: ${normativeOntology.length} requisitos normativos vs ${programOntology.length} ítems del programa…`
     );
 
-    const BATCH_SIZE = 100;
+    const BATCH_SIZE = 50; // Reduce batch size slightly to improve semantic match accuracy per batch
     const allResults: ComparisonResult[] = [];
 
-    const normativeList = normativeOntology
+    // Format the entire program ontology once as reference text
+    const programList = programOntology
       .map(
         (item) =>
           `- [${item.category}] ${item.requirement}: ${item.description} (Keywords: ${(item.keywords || []).join(', ')})`
       )
       .join('\n');
 
-    for (let i = 0; i < programOntology.length; i += BATCH_SIZE) {
+    for (let i = 0; i < normativeOntology.length; i += BATCH_SIZE) {
       if (i > 0) {
         const waitLabel = (isGroq || isGroqFast) ? 'Groq' : 'Gemini';
         logger.info('Comparison', `Waiting 6 seconds to respect ${waitLabel} API rate limits...`);
         await new Promise((resolve) => setTimeout(resolve, 6000));
       }
 
-      const batch = programOntology.slice(i, i + BATCH_SIZE);
+      const batch = normativeOntology.slice(i, i + BATCH_SIZE);
       logger.info(
         'Comparison',
         `Procesando lote ${Math.floor(i / BATCH_SIZE) + 1} de ${Math.ceil(
-          programOntology.length / BATCH_SIZE
-        )} (${batch.length} ítems de programa)…`
+          normativeOntology.length / BATCH_SIZE
+        )} (${batch.length} requisitos normativos)…`
       );
 
-      const programList = batch
+      const normativeList = batch
         .map(
           (item) =>
-            `ID: ${item.id} | Categoría: ${item.category} | Ítem: ${item.requirement} | Descripción: ${item.description} | Keywords: ${(item.keywords || []).join(', ')}`
+            `ID: ${item.id} | Categoría: ${item.category} | Requisito: ${item.requirement} | Descripción: ${item.description} | Keywords: ${(item.keywords || []).join(', ')}`
         )
         .join('\n');
 
-      const prompt = `Eres un experto en evaluación de programas de materias universitarias y análisis de conformidad regulatoria.
-Analiza la conformidad de los siguientes ${batch.length} ítems del programa de la materia frente al documento normativo de referencia.
+      const prompt = `Eres un experto en evaluación de programas de materias universitarias y análisis de conformidad regulatoria de planes de estudio y guías docentes frente a rúbricas de acreditación.
+Analiza si el programa de la materia cumple con los siguientes ${batch.length} requisitos normativos de la rúbrica de referencia.
 
-Para CADA ítem del programa (hay exactamente ${batch.length}), determina:
-- itemId: ID del ítem del programa (por ejemplo, ${batch[0]?.id})
-- status: "covered" (el ítem del programa cumple plenamente con los requisitos y estándares normativos) | "partial" (el ítem cumple de manera parcial o incompleta con las regulaciones) | "missing" (el ítem del programa no cumple o está ausente de alineación con la normativa)
+Para CADA requisito normativo de la lista (hay exactamente ${batch.length}), determina:
+- itemId: ID del requisito normativo a evaluar (por ejemplo, ${batch[0]?.id})
+- status: 
+  * "covered": el programa de la materia cumple plenamente con el requisito de la rúbrica (ya sea de forma explícita o por equivalencia conceptual clara).
+  * "partial": el programa cumple el requisito normativo de forma parcial, incompleta, vaga, ambigua o insuficiente.
+  * "missing": el requisito de la rúbrica/normativa no está cubierto, está ausente, no se menciona o la información clave requerida falta por completo en el programa.
 - confidence: número entre 0.0 y 1.0 que indica tu certeza
 - evidence: 
-  * Si está "covered" o "partial": cita textualmente o resume las secciones y requisitos específicos de la norma que respaldan, cubren o exigen este contenido/objetivo del programa.
-  * Si está "missing": explica detalladamente por qué este contenido o aspecto del programa no cumple o no se alinea con las directivas de la norma de referencia.
-- suggestion: recomendación pedagógica específica y aplicable para que este contenido o aspecto del programa se adecue plenamente a las directivas de la norma de referencia, o "Ninguna" si ya está en conformidad o no aplica.
+  * Si está "covered" o "partial": cita textualmente o resume las secciones del programa de la materia que cubren este requisito normativo.
+  * Si está "missing": explica detalladamente qué información o elemento regulatorio de la rúbrica (como homologabilidad, carga horaria, contenidos mínimos, etc.) está ausente en el programa.
+- suggestion: recomendación pedagógica y administrativa concreta para incorporar el texto o corregir el programa de la materia a fin de satisfacer plenamente el requisito. Si ya cumple plenamente, responde "Ninguna".
 
 REGLAS DE EVALUACIÓN SEMÁNTICA Y CONDICIONAL:
-1. Usa razonamiento semántico avanzado: un ítem del programa puede estar alineado con la normativa conceptualmente aunque se exprese con terminología diferente.
-2. DECLARACIONES NEGATIVAS O DE NO APLICABILIDAD: Si un requisito exige especificar, detallar o regular cierto aspecto y la guía docente/programa indica de manera explícita que NO aplica, que NO se concede, o que NINGUNA actividad/recurso está sujeto a ello, este aspecto se debe evaluar como "covered" (cubierto) and NO como "missing" o "partial".
+1. Usa razonamiento semántico avanzado: un requisito puede estar cubierto conceptualmente aunque se exprese con terminología diferente en el programa.
+2. DECLARACIONES NEGATIVAS O DE NO APLICABILIDAD: Si un requisito exige especificar o detallar cierto aspecto y el programa indica explícitamente que no aplica, este aspecto se debe evaluar como "covered" y NO como "missing" o "partial".
+3. REQUISITOS DE DISEÑO DE PLAN / HOMOLOGACIÓN: Si el requisito exige datos administrativos de la carrera o el plan (carga horaria total de la carrera, perfil del graduado, homologación, etc.) y estos no figuran en el programa de la materia evaluada, indícalo como "missing" o "partial" según corresponda.
 
 Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo el JSON puro:
 
 {"results": [
   {
-    "itemId": "PROG-CONT-001",
+    "itemId": "REQ-001",
     "status": "covered",
     "confidence": 0.9,
     "evidence": "...",
@@ -619,14 +717,14 @@ Devuelve un JSON con la siguiente estructura exacta. No incluyas markdown, solo 
 ]}
 
 ═══════════════════════════════════════════════════════════
-ÍTEMS DEL PROGRAMA A EVALUAR (${batch.length} items):
+REQUISITOS NORMATIVOS/RÚBRICA A EVALUAR (${batch.length} items):
 ═══════════════════════════════════════════════════════════
-${programList}
+${normativeList}
 
 ═══════════════════════════════════════════════════════════
-REQUISITOS NORMATIVOS DE REFERENCIA (${normativeOntology.length} items):
+CONTENIDO Y ESTRUCTURA DEL PROGRAMA DE REFERENCIA:
 ═══════════════════════════════════════════════════════════
-${normativeList}`;
+${programList}`;
 
       const maxTokens = isGroq ? 4096 : (isGroqFast ? 1536 : MAX_OUTPUT_TOKENS);
       const response = await this.generateWithRetry(
@@ -653,11 +751,10 @@ ${normativeList}`;
 
       logger.info(
         'Comparison',
-        `Lote ${Math.floor(i / BATCH_SIZE) + 1}: modelo devolvió ${rawResults.length} resultados parseados para ${batch.length} ítems de programa`
+        `Lote ${Math.floor(i / BATCH_SIZE) + 1}: modelo devolvió ${rawResults.length} resultados parseados para ${batch.length} requisitos normativos`
       );
 
-      // Build a normalized lookup map: normalize IDs for case-insensitive,
-      // whitespace-insensitive, and separator-insensitive matching.
+      // Build a normalized lookup map
       const normalizeId = (id: string) => id.trim().toLowerCase().replace(/[\s_]+/g, '-');
 
       const batchMap = new Map<string, OntologyItem>();
@@ -669,7 +766,6 @@ ${normativeList}`;
       const matchedResults = new Map<string, ComparisonResult>();
 
       for (const r of rawResults) {
-        // The model might use different field names for the ID
         const rawId = r.itemId ?? r.item_id ?? r.id ?? r.reqId ?? r.req_id ?? '';
         const status = r.status;
         if (!rawId || !status) continue;
@@ -680,7 +776,7 @@ ${normativeList}`;
         if (!item) {
           logger.warn(
             'Comparison',
-            `ID del modelo "${rawId}" (normalizado: "${normId}") no coincide con ningún ítem del lote. IDs esperados: ${batch.slice(0, 5).map(b => b.id).join(', ')}...`
+            `ID del modelo "${rawId}" (normalizado: "${normId}") no coincide con ningún requisito normativo del lote. IDs esperados: ${batch.slice(0, 5).map(b => b.id).join(', ')}...`
           );
           continue;
         }
@@ -696,7 +792,7 @@ ${normativeList}`;
 
       logger.info(
         'Comparison',
-        `Lote ${Math.floor(i / BATCH_SIZE) + 1}: ${matchedResults.size}/${batch.length} ítems mapeados exitosamente`
+        `Lote ${Math.floor(i / BATCH_SIZE) + 1}: ${matchedResults.size}/${batch.length} requisitos normativos mapeados exitosamente`
       );
 
       // Ensure every batch item has a result
@@ -705,12 +801,12 @@ ${normativeList}`;
         if (found) {
           allResults.push(found);
         } else {
-          logger.warn('Comparison', `Sin resultado del modelo para: ${item.id} (${item.requirement})`);
+          logger.warn('Comparison', `Sin resultado del modelo para requisito: ${item.id} (${item.requirement})`);
           allResults.push({
             item,
             status: 'missing',
             confidence: 0.0,
-            evidence: 'No se obtuvo respuesta del modelo de lenguaje para este ítem del programa durante el procesamiento.',
+            evidence: 'No se obtuvo respuesta del modelo de lenguaje para este requisito normativo durante el procesamiento.',
             suggestion: 'Reintentar la comparación o verificar el documento de forma manual.'
           });
         }
@@ -737,9 +833,9 @@ ${normativeList}`;
     onProgress?.('Extrayendo ontología del programa...');
     const programOntology = await this.extractProgramOntology(programText, provider);
     
-    onProgress?.('Comparando los ítems del programa con la normativa...');
-    // The program items define the ontology to be controlled (checklist)
-    const results         = await this.compareOntologies(programOntology, ontology, provider);
+    onProgress?.('Comparando la normativa con el programa...');
+    // We evaluate the normative requirements (ontology) against the program ontology
+    const results         = await this.compareOntologies(ontology, programOntology, provider);
 
     const covered = results.filter((r) => r.status === 'covered').length;
     const partial = results.filter((r) => r.status === 'partial').length;
@@ -752,14 +848,14 @@ ${normativeList}`;
 
     logger.info(
       'Comparison',
-      `📊 Resumen: ${covered} cubiertos | ${partial} parciales | ${missing} faltantes | Cumplimiento: ${coveragePercent}%`
+      `📊 Resumen de Comparación: ${covered} cubiertos | ${partial} parciales | ${missing} faltantes | Cumplimiento: ${coveragePercent}%`
     );
 
     return {
       normativeDocument: normativeName,
       programDocument: programName,
-      ontology: programOntology,
-      programOntology: ontology,
+      ontology, // normative ontology (stored as ontology in the database schema)
+      programOntology, // program ontology (stored as programOntology in the database schema)
       results,
       summary: { total, covered, partial, missing, coveragePercent },
       timestamp: new Date().toISOString(),

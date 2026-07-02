@@ -257,12 +257,15 @@ const compareTranslations = {
               </div>
             </div>
           </div>
-          <div style="display: flex; gap: 12px; align-items: center;">
+          <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
             <button id="btn-fix" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-emerald), #059669); box-shadow: 0 0 18px rgba(16, 185, 129, 0.25); display: none; padding: 10px 24px; font-size: 0.88rem; font-weight: 700; height: auto;">
               {t('compare.btn_fix', currentLang)}
             </button>
             <button id="btn-download-non-compliance" class="btn-compare" style="background: linear-gradient(135deg, var(--accent-rose), #e11d48); box-shadow: 0 0 18px rgba(244, 63, 94, 0.25); display: none; padding: 10px 24px; font-size: 0.88rem; font-weight: 700; height: auto;">
               {t('compare.btn_download_non_compliance', currentLang)}
+            </button>
+            <button id="btn-download-full-report" class="btn-compare" style="background: linear-gradient(135deg, #8b5cf6, #6d28d9); box-shadow: 0 0 18px rgba(139, 92, 246, 0.25); display: none; padding: 10px 24px; font-size: 0.88rem; font-weight: 700; height: auto;">
+              📄 {t('compare.btn_download_full_report', currentLang)}
             </button>
           </div>
         </div>

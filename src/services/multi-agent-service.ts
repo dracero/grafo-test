@@ -37,9 +37,9 @@ export async function* runCorrectionPipeline(
       const normDoc = context.state.get<string>('app:normative_doc') || normativeName;
       const progDoc = context.state.get<string>('app:program_doc');
       const email = context.state.get<string>('app:user_email') || '';
-      logger.info('NormativeOntologyAgent', `Fetching normative ontology (via program doc entities: ${progDoc}) for user: ${email}`);
+      logger.info('NormativeOntologyAgent', `Fetching normative ontology for: ${normDoc} for user: ${email}`);
       
-      let ontology = await graphBuilder.getProgramOntology(progDoc || '', email);
+      let ontology = await graphBuilder.getNormativeOntology(normDoc || '', email);
       if (provider === 'groq-fast') {
         ontology = ontology.slice(0, 15);
       }
@@ -63,9 +63,9 @@ export async function* runCorrectionPipeline(
       const normDoc = context.state.get<string>('app:normative_doc');
       const progDoc = context.state.get<string>('app:program_doc') || programName;
       const email = context.state.get<string>('app:user_email') || '';
-      logger.info('ProgramOntologyAgent', `Fetching program ontology (via normative doc OntologyItems: ${normDoc}) for user: ${email}`);
+      logger.info('ProgramOntologyAgent', `Fetching program ontology for: ${progDoc} for user: ${email}`);
       
-      let ontology = await graphBuilder.getNormativeOntology(normDoc || '', email);
+      let ontology = await graphBuilder.getProgramOntology(progDoc || '', email);
       if (provider === 'groq-fast') {
         ontology = ontology.slice(0, 15);
       }

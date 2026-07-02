@@ -86,11 +86,37 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
           const progPdf = await pdfParse(progBuffer);
 
           if (!normPdf.text?.trim()) {
-            throw new Error('No se pudo extraer texto del documento normativo');
+            throw new Error('No se pudo extraer texto del documento normativo. El archivo puede estar dañado o ser un PDF basado en imágenes (escaneado).');
           }
           if (!progPdf.text?.trim()) {
-            throw new Error('No se pudo extraer texto del programa');
+            throw new Error('No se pudo extraer texto del programa. El archivo puede estar dañado o ser un PDF basado en imágenes (escaneado).');
           }
+
+          // Detect PDFs where text extraction failed silently (e.g. scanned docs,
+          // Google Drive "Print to PDF" artifacts, image-based PDFs).
+          // A typical text PDF yields ~4-8 chars per KB of file size.
+          const MIN_TEXT_CHARS = 500;
+          const normTextLen = normPdf.text.trim().length;
+          const progTextLen = progPdf.text.trim().length;
+
+          if (normBuffer.length > 10_000 && normTextLen < MIN_TEXT_CHARS) {
+            logger.warn('API', `Normative PDF text extraction yielded suspiciously little text: ${normTextLen} chars from ${normBuffer.length} bytes (${normFile.name})`);
+            throw new Error(
+              `El documento normativo "${normFile.name}" parece ser un PDF basado en imágenes o escaneado. ` +
+              `Se extrajeron solo ${normTextLen} caracteres de un archivo de ${Math.round(normBuffer.length / 1024)}KB. ` +
+              `Por favor, suba un PDF con texto seleccionable (no escaneado ni impreso desde Google Drive).`
+            );
+          }
+          if (progBuffer.length > 10_000 && progTextLen < MIN_TEXT_CHARS) {
+            logger.warn('API', `Program PDF text extraction yielded suspiciously little text: ${progTextLen} chars from ${progBuffer.length} bytes (${progFile.name})`);
+            throw new Error(
+              `El programa "${progFile.name}" parece ser un PDF basado en imágenes o escaneado. ` +
+              `Se extrajeron solo ${progTextLen} caracteres de un archivo de ${Math.round(progBuffer.length / 1024)}KB. ` +
+              `Por favor, suba un PDF con texto seleccionable (no escaneado ni impreso desde Google Drive).`
+            );
+          }
+
+          logger.info('API', `PDF text extracted — Normative: ${normTextLen} chars (${Math.round(normBuffer.length / 1024)}KB), Program: ${progTextLen} chars (${Math.round(progBuffer.length / 1024)}KB)`);
 
           const clearPrevious = formData.get('clearPrevious') === 'true';
           const report = await comparisonService.fullComparison(
